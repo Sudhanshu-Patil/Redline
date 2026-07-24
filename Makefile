@@ -23,7 +23,7 @@ data:
 	uv run python scripts/synthesize_pairs.py
 
 chat:
-	@echo "TODO: wire up in Phase 8 (grounded chat CLI)"
+	uv run python -m src.chat.answer $(MANIFEST)
 
 eval:
 	@echo "TODO: wire up in Phase 10 (make eval -> eval/scorecard.json)"
