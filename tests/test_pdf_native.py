@@ -149,6 +149,33 @@ def test_instrument_loop_three_line_cluster_with_unit():
     ]
 
 
+def test_instrument_loop_with_parallel_unit_letter_clusters():
+    """PSV bubbles carry lettered loop numbers (9066A/9066B) — these must
+    cluster exactly like plain numeric loops."""
+    lines = [L("PSV"), L("9066A")]
+    result = classify_block_lines(lines)
+    assert result == [
+        ElementDraft(
+            "instrument_loop", "PSV-9066A", B, {"function": "PSV", "loop_number": "9066A"}
+        )
+    ]
+
+
+def test_hyphenated_instrument_tag_single_token():
+    """DWG ATTRIBs and prose carry tags as one token: 'PIT-9062'."""
+    result = classify_block_lines([L("PIT-9062")])
+    assert result == [
+        ElementDraft(
+            "instrument_loop", "PIT-9062", B, {"function": "PIT", "loop_number": "9062"}
+        )
+    ]
+
+
+def test_hyphenated_token_with_unknown_function_code_stays_text():
+    result = classify_block_lines([L("ZZZ-9062")])
+    assert result[0].type == "text_block"
+
+
 def test_instrument_loop_rejects_unit_code_as_loop_number():
     """PI followed by a 2-digit unit code (not a 3-6 digit loop number) must NOT
     merge -- this is the guard against mis-clustering 'PI' + area-code '26'."""

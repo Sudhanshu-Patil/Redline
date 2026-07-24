@@ -399,16 +399,257 @@ def build_pair4() -> None:
         log.info("pair4 built")
 
 
+# --- Pair 3: DWG/DXF ------------------------------------------------------
+#
+# Provenance decision (documented in PROVENANCE.md): no PDF->DXF converter
+# preserves the text layer (text becomes vector outlines, destroying the keys
+# the delta engine matches on), and no conversion tooling ships on a stock
+# machine. So A.dxf is AUTHORED here with ezdxf as a compact P&ID-style
+# schematic whose tag vocabulary mirrors the Lift Gas Compressor drawing, and
+# B.dxf applies a documented edit list. Real files, real parser, exact
+# ground truth -- and regenerable from this script alone.
+
+PAIR3_SP_OLD = "SP = 257 bar (g)"
+PAIR3_SP_NEW = "SP = 260 bar (g)"
+PAIR3_DIM_OLD = "600"
+PAIR3_DIM_NEW = "750"
+PAIR3_ADDED_VALVE = "43BL9020"
+PAIR3_MOVED_VALVE = "26BL9075"
+
+
+def _author_pair3_drawing(edited: bool):
+    """Build the Pair 3 model in memory; `edited` applies the B-side edits."""
+    import ezdxf
+
+    doc = ezdxf.new("R2018", setup=True)
+    for name, color in [
+        ("PIPING", 4), ("INSTRUMENTS", 2), ("TEXT", 7),
+        ("NOTES", 7), ("EQUIPMENT", 1), ("DIMS", 3),
+    ]:  # fmt: skip
+        doc.layers.add(name, color=color)
+
+    # Block: gate valve (bowtie)
+    valve = doc.blocks.new(name="VALVE_GATE")
+    valve.add_lwpolyline([(0, 0), (6, 3), (0, 3), (6, 0), (0, 0)], close=True)
+
+    # Block: instrument bubble with a TAG attribute
+    bubble = doc.blocks.new(name="INSTR_BUBBLE")
+    bubble.add_circle((0, 0), radius=4)
+    bubble.add_attdef("TAG", insert=(-3.4, -0.8), height=1.6)
+
+    msp = doc.modelspace()
+
+    # Main process line with a size/spec label
+    msp.add_line((10, 40), (150, 40), dxfattribs={"layer": "PIPING"})
+    msp.add_text(
+        '6"-VF-43-9029-AC21S-00', height=2.2, dxfattribs={"layer": "TEXT"}
+    ).set_placement((55, 43))
+
+    # Two gate valves on the line; B moves 26BL9075 8 units right, 6 up
+    msp.add_blockref("VALVE_GATE", (40, 38.5), dxfattribs={"layer": "PIPING"})
+    msp.add_text("26BL9072", height=1.8, dxfattribs={"layer": "TEXT"}).set_placement((38, 34))
+    moved_insert = (128, 44.5) if edited else (120, 38.5)
+    msp.add_blockref("VALVE_GATE", moved_insert, dxfattribs={"layer": "PIPING"})
+    msp.add_text(PAIR3_MOVED_VALVE, height=1.8, dxfattribs={"layer": "TEXT"}).set_placement(
+        (moved_insert[0] - 2, moved_insert[1] - 4.5)
+    )
+
+    # Added in B only: a third valve teed off the line
+    if edited:
+        msp.add_blockref("VALVE_GATE", (90, 20), dxfattribs={"layer": "PIPING"})
+        msp.add_text(PAIR3_ADDED_VALVE, height=1.8, dxfattribs={"layer": "TEXT"}).set_placement(
+            (88, 15.5)
+        )
+        msp.add_line((93, 23), (93, 40), dxfattribs={"layer": "PIPING"})
+
+    # Removed in B: a drain stub off the main line
+    if not edited:
+        msp.add_line((70, 40), (70, 25), dxfattribs={"layer": "PIPING"})
+
+    # Instrument bubbles (block + ATTRIB tag)
+    pit = msp.add_blockref("INSTR_BUBBLE", (90, 70), dxfattribs={"layer": "INSTRUMENTS"})
+    pit.add_auto_attribs({"TAG": "PIT-9062"})
+    msp.add_text("HH: 245", height=1.6, dxfattribs={"layer": "INSTRUMENTS"}).set_placement(
+        (96, 71)
+    )
+    psv = msp.add_blockref("INSTR_BUBBLE", (140, 75), dxfattribs={"layer": "INSTRUMENTS"})
+    psv.add_auto_attribs({"TAG": "PSV-9066A"})
+    msp.add_text(
+        PAIR3_SP_NEW if edited else PAIR3_SP_OLD,
+        height=1.6,
+        dxfattribs={"layer": "INSTRUMENTS"},
+    ).set_placement((133, 81))
+
+    # Equipment outline + title
+    msp.add_lwpolyline(
+        [(20, 55), (60, 55), (60, 90), (20, 90)], close=True, dxfattribs={"layer": "EQUIPMENT"}
+    )
+    msp.add_text("26-KA-901 GAS LIFT SKID", height=3.0, dxfattribs={"layer": "TEXT"}).set_placement(
+        (20, 95)
+    )
+
+    # Notes block (MTEXT)
+    msp.add_mtext(
+        "1. RELIEF TO HP FLARE.\n2. HEAT TRACING PER SPEC 26-HT-02.",
+        dxfattribs={"layer": "NOTES", "char_height": 1.8, "insert": (10, 12), "width": 70},
+    )
+
+    # Dimension with explicit text override; B revises the stated length
+    dim = msp.add_linear_dim(
+        base=(40, 30),
+        p1=(40, 38.5),
+        p2=(120, 38.5),
+        text=PAIR3_DIM_NEW if edited else PAIR3_DIM_OLD,
+        dxfattribs={"layer": "DIMS"},
+    )
+    dim.render()
+    return doc
+
+
+def build_pair3() -> None:
+    with tracing.span("synthesize.pair3"):
+        from src.ingest.dwg import DwgAdapter
+
+        out_dir = SAMPLES / "pair3"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        path_a = out_dir / "A.dxf"
+        path_b = out_dir / "B.dxf"
+        _author_pair3_drawing(edited=False).saveas(path_a)
+        _author_pair3_drawing(edited=True).saveas(path_b)
+
+        # Verify through the real adapter, exactly like pair 1.
+        doc_a = DwgAdapter().ingest(path_a, pid="pair3_A_verify")
+        doc_b = DwgAdapter().ingest(path_b, pid="pair3_B_verify")
+        texts_a = [e.text for e in doc_a.elements]
+        texts_b = [e.text for e in doc_b.elements]
+        assert PAIR3_SP_OLD in texts_a and PAIR3_SP_OLD not in texts_b
+        assert PAIR3_SP_NEW in texts_b and PAIR3_SP_NEW not in texts_a
+        assert PAIR3_ADDED_VALVE in texts_b and PAIR3_ADDED_VALVE not in texts_a
+        assert PAIR3_DIM_OLD in texts_a and PAIR3_DIM_NEW in texts_b
+        assert "PIT-9062" in texts_a and "PIT-9062" in texts_b
+
+        def insert_bbox(doc, label_text):
+            # bbox of the VALVE_GATE insert nearest its label text
+            inserts = [
+                e for e in doc.elements if e.attributes.get("block_name") == "VALVE_GATE"
+            ]
+            label = next(e for e in doc.elements if e.text == label_text)
+            return min(
+                inserts,
+                key=lambda e: abs(e.bbox.x0 - label.bbox.x0) + abs(e.bbox.y0 - label.bbox.y0),
+            ).bbox
+
+        moved_a = insert_bbox(doc_a, PAIR3_MOVED_VALVE)
+        moved_b = insert_bbox(doc_b, PAIR3_MOVED_VALVE)
+        assert (moved_a.x0, moved_a.y0) != (moved_b.x0, moved_b.y0), "valve move not applied"
+
+        removed_lines_a = [
+            e
+            for e in doc_a.elements
+            if e.attributes.get("entity_type") == "LINE" and e.bbox.x0 == e.bbox.x1
+        ]
+        assert removed_lines_a, "vertical drain line missing from A"
+
+        expected = [
+            ExpectedDelta(
+                gt_id="GT3-SP",
+                change_type="modified",
+                element_type="setpoint",
+                old_text=PAIR3_SP_OLD,
+                new_text=PAIR3_SP_NEW,
+                locator=GTLocator(page=0, near_text="PSV-9066A"),
+                rationale="Text entity value change beside a tagged instrument block.",
+            ),
+            ExpectedDelta(
+                gt_id="GT3-MOVE",
+                change_type="modified",
+                element_type="geometry",
+                old_text=PAIR3_MOVED_VALVE,
+                new_text=PAIR3_MOVED_VALVE,
+                locator=GTLocator(
+                    page=0,
+                    bbox=(moved_a.x0, moved_a.y0, moved_a.x1, moved_a.y1),
+                    near_text="VALVE_GATE",
+                ),
+                rationale="Moved block reference (same block, same layer): exercises the "
+                "geometry-aware match rule (plan §4.2), which must pair the two INSERTs "
+                "by layer+entity+block despite the offset. Label text moves with it.",
+            ),
+            ExpectedDelta(
+                gt_id="GT3-DIM",
+                change_type="modified",
+                element_type="dimension",
+                old_text=PAIR3_DIM_OLD,
+                new_text=PAIR3_DIM_NEW,
+                locator=GTLocator(page=0, near_text="DIMS"),
+                rationale="Dimension text override revised.",
+            ),
+            ExpectedDelta(
+                gt_id="GT3-ADD-VALVE",
+                change_type="added",
+                element_type="geometry",
+                old_text=None,
+                new_text=PAIR3_ADDED_VALVE,
+                locator=GTLocator(page=0, near_text="VALVE_GATE"),
+                rationale="New valve insert + label + tie-in line (counted as the labelled "
+                "valve; the tie-in LINE is a second added geometry).",
+            ),
+            ExpectedDelta(
+                gt_id="GT3-DEL-DRAIN",
+                change_type="removed",
+                element_type="geometry",
+                old_text="",
+                new_text=None,
+                locator=GTLocator(page=0, bbox=(60, 25 - 12, 60 + 0.1, 40 - 12)),
+                rationale="Drain stub LINE removed; no text key -- only the geometry rule "
+                "can catch it.",
+            ),
+        ]
+        # GT3-DEL-DRAIN carries old_text="" (a LINE has no text); schema wants
+        # removed entries to have old_text -- "" is meaningful here.
+
+        ground_truth = GroundTruth(
+            pair_id="pair3",
+            expected_deltas=expected,
+            notes=(
+                "A.dxf and B.dxf are authored programmatically (see "
+                "scripts/synthesize_pairs.py::_author_pair3_drawing) because PDF->DXF "
+                "conversion flattens text to outlines. The moved valve's LABEL text also "
+                "moves with GT3-MOVE (same string, new position) -- position-only text "
+                "moves are expected to align as unchanged-or-modified, never add/remove."
+            ),
+        )
+        (out_dir / "ground_truth.json").write_text(
+            ground_truth.model_dump_json(indent=2), encoding="utf-8"
+        )
+        manifest = PairManifest(
+            pair_id="pair3",
+            description="DWG-format pair: authored DXF P&ID schematic vs edited revision "
+            "(text change, moved block, dimension revision, added valve, removed line).",
+            doc_a=DocRef(
+                path=_rel(path_a), pid="pair3_A", format="dwg", revision_label="rev A"
+            ),
+            doc_b=DocRef(
+                path=_rel(path_b), pid="pair3_B", format="dwg", revision_label="rev B"
+            ),
+            ground_truth_path=_rel(out_dir / "ground_truth.json"),
+            created_by=CREATED_BY,
+        )
+        (out_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+        log.info("pair3 built", extra={"extra_fields": {"edits": len(expected)}})
+
+
 def main() -> None:
     with tracing.trace("synthesize_pairs"):
         assert LIFT_GAS.exists() and EXPORT_GAS.exists(), "original sample PDFs missing"
         build_pair1()
         build_pair2()
+        build_pair3()
         build_pair4()
     sizes = {
         p.relative_to(SAMPLES).as_posix(): f"{p.stat().st_size / 1024:.0f} KB"
         for p in sorted(SAMPLES.rglob("*"))
-        if p.is_file() and p.suffix in {".pdf", ".json"}
+        if p.is_file() and p.suffix in {".pdf", ".json", ".dxf"}
     }
     print(json.dumps(sizes, indent=2))
     print("All pairs built and verified.")

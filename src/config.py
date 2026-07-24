@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     vision_fallback_max_regions: int = 12  # cap LLM calls per document
     vision_fallback_confidence: float = 0.9  # confidence assigned to LLM re-reads
 
+    # DWG/DXF
+    oda_file_converter: str = ""  # path to ODAFileConverter.exe; empty = PATH lookup
+    dwg_dim_decimals: int = 1  # decimals when rendering measured dimension values
+
     # Paths
     data_dir: Path = Path("./data")
     traces_dir: Path = Path("./traces")

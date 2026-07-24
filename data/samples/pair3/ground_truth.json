@@ -1,0 +1,82 @@
+{
+  "pair_id": "pair3",
+  "negative_control": false,
+  "expected_deltas": [
+    {
+      "gt_id": "GT3-SP",
+      "change_type": "modified",
+      "element_type": "setpoint",
+      "old_text": "SP = 257 bar (g)",
+      "new_text": "SP = 260 bar (g)",
+      "locator": {
+        "page": 0,
+        "bbox": null,
+        "near_text": "PSV-9066A"
+      },
+      "rationale": "Text entity value change beside a tagged instrument block."
+    },
+    {
+      "gt_id": "GT3-MOVE",
+      "change_type": "modified",
+      "element_type": "geometry",
+      "old_text": "26BL9075",
+      "new_text": "26BL9075",
+      "locator": {
+        "page": 0,
+        "bbox": [
+          110.0,
+          31.80695497953615,
+          116.0,
+          34.80695497953615
+        ],
+        "near_text": "VALVE_GATE"
+      },
+      "rationale": "Moved block reference (same block, same layer): exercises the geometry-aware match rule (plan §4.2), which must pair the two INSERTs by layer+entity+block despite the offset. Label text moves with it."
+    },
+    {
+      "gt_id": "GT3-DIM",
+      "change_type": "modified",
+      "element_type": "dimension",
+      "old_text": "600",
+      "new_text": "750",
+      "locator": {
+        "page": 0,
+        "bbox": null,
+        "near_text": "DIMS"
+      },
+      "rationale": "Dimension text override revised."
+    },
+    {
+      "gt_id": "GT3-ADD-VALVE",
+      "change_type": "added",
+      "element_type": "geometry",
+      "old_text": null,
+      "new_text": "43BL9020",
+      "locator": {
+        "page": 0,
+        "bbox": null,
+        "near_text": "VALVE_GATE"
+      },
+      "rationale": "New valve insert + label + tie-in line (counted as the labelled valve; the tie-in LINE is a second added geometry)."
+    },
+    {
+      "gt_id": "GT3-DEL-DRAIN",
+      "change_type": "removed",
+      "element_type": "geometry",
+      "old_text": "",
+      "new_text": null,
+      "locator": {
+        "page": 0,
+        "bbox": [
+          60.0,
+          13.0,
+          60.1,
+          28.0
+        ],
+        "near_text": null
+      },
+      "rationale": "Drain stub LINE removed; no text key -- only the geometry rule can catch it."
+    }
+  ],
+  "notes": "A.dxf and B.dxf are authored programmatically (see scripts/synthesize_pairs.py::_author_pair3_drawing) because PDF->DXF conversion flattens text to outlines. The moved valve's LABEL text also moves with GT3-MOVE (same string, new position) -- position-only text moves are expected to align as unchanged-or-modified, never add/remove."
+}

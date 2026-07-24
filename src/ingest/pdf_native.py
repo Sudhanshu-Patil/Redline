@@ -60,11 +60,17 @@ _SIZE_TRANSITION_RE = re.compile(r'^\d+"?\s*[xX]\s*\d+"?$')
 _SETPOINT_INLINE_RE = re.compile(r"^(SP|SET\s*PRESSURE)\s*=\s*([\d.]+)\s*(.*)$", re.IGNORECASE)
 _SETPOINT_LIMIT_RE = re.compile(r"^(HH|LL|H|L)\s*[:=]\s*([\d.]+)$")
 
-# Loop numbers are 3-6 digits; unit/area codes are 1-3 digits. This distinction is
-# what keeps e.g. "PI" + "26" (function code + unit code, not a loop number) from
-# being mis-clustered into an instrument_loop — see docstring above.
-_INSTRUMENT_LOOP_NUM_RE = re.compile(r"^\d{3,6}$")
+# Loop numbers are 3-6 digits with an optional parallel-unit letter (9066A);
+# unit/area codes are 1-3 digits. This distinction is what keeps e.g. "PI" +
+# "26" (function code + unit code, not a loop number) from being
+# mis-clustered into an instrument_loop — see docstring above.
+_INSTRUMENT_LOOP_NUM_RE = re.compile(r"^\d{3,6}[A-Z]?$")
 _UNIT_CODE_RE = re.compile(r"^\d{1,3}$")
+
+# Hyphenated single-token form ("PIT-9062", "PSV-9066A") — how DWG ATTRIBs
+# and prose references carry instrument tags. Function code validated against
+# INSTRUMENT_FUNCTION_CODES at match time.
+_HYPHENATED_INSTRUMENT_RE = re.compile(r"^([A-Z]{2,5})-(\d{3,6}[A-Z]?)$")
 
 _SINGLE_LETTER_RE = re.compile(r"^[A-Z]$")
 
@@ -178,6 +184,19 @@ def classify_block_lines(lines: list[RawLine]) -> list[ElementDraft]:
 
         if _LINE_NUMBER_RE.match(stripped):
             drafts.append(ElementDraft("line_number", stripped, bbox))
+            i += 1
+            continue
+
+        m = _HYPHENATED_INSTRUMENT_RE.match(stripped)
+        if m and m.group(1) in INSTRUMENT_FUNCTION_CODES:
+            drafts.append(
+                ElementDraft(
+                    "instrument_loop",
+                    stripped,
+                    bbox,
+                    {"function": m.group(1), "loop_number": m.group(2)},
+                )
+            )
             i += 1
             continue
 

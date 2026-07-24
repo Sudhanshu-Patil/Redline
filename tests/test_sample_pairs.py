@@ -12,7 +12,7 @@ from eval.schema import GroundTruth, load_ground_truth, load_manifest
 from src.ingest.pdf_native import PdfNativeAdapter
 
 SAMPLES = Path("data/samples")
-PAIR_IDS = ["pair1", "pair2", "pair4"]
+PAIR_IDS = ["pair1", "pair2", "pair3", "pair4"]
 
 
 @pytest.fixture(scope="module", params=PAIR_IDS)
@@ -31,14 +31,17 @@ def test_manifest_and_ground_truth_are_consistent(pair):
 
 
 def test_ground_truth_deltas_are_well_formed(pair):
+    """added: only new side; removed: only old side; modified: both.
+    Geometry elements may carry empty-string text (a LINE has none), so the
+    invariant is presence (not None), not non-emptiness."""
     _, ground_truth = pair
     for delta in ground_truth.expected_deltas:
         if delta.change_type == "added":
-            assert delta.old_text is None and delta.new_text
+            assert delta.old_text is None and delta.new_text is not None
         elif delta.change_type == "removed":
-            assert delta.old_text and delta.new_text is None
+            assert delta.old_text is not None and delta.new_text is None
         else:
-            assert delta.old_text and delta.new_text
+            assert delta.old_text is not None and delta.new_text is not None
 
 
 @pytest.fixture(scope="module")

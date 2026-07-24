@@ -1,0 +1,18 @@
+{
+  "pair_id": "pair3",
+  "description": "DWG-format pair: authored DXF P&ID schematic vs edited revision (text change, moved block, dimension revision, added valve, removed line).",
+  "doc_a": {
+    "path": "data/samples/pair3/A.dxf",
+    "pid": "pair3_A",
+    "format": "dwg",
+    "revision_label": "rev A"
+  },
+  "doc_b": {
+    "path": "data/samples/pair3/B.dxf",
+    "pid": "pair3_B",
+    "format": "dwg",
+    "revision_label": "rev B"
+  },
+  "ground_truth_path": "data/samples/pair3/ground_truth.json",
+  "created_by": "scripts/synthesize_pairs.py"
+}

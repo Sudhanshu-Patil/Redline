@@ -57,10 +57,32 @@ changes. Verified crops of every edited region were reviewed during synthesis.
   **low-alignment-rate warning**, not a dump of hundreds of spurious adds/removes. Eval scores
   this pair on that behaviour alone.
 
-## Pair 3 — DWG (pending Phase 4)
+## Pair 3 — DWG/DXF (authored schematic vs edited revision)
 
-Will be added by the DWG phase: DXF conversion of a P&ID sheet + one synthetic edit, with
-conversion provenance documented here.
+- **A:** `pair3/A.dxf`, **B:** `pair3/B.dxf` — both authored programmatically by
+  `scripts/synthesize_pairs.py::_author_pair3_drawing` (ezdxf, R2018).
+- **Why authored rather than converted:** no PDF→DXF converter preserves the text layer
+  (text becomes vector outlines), which would destroy the exact-match keys the delta engine
+  depends on; and neither ODA File Converter (DWG↔DXF only) nor any other conversion tooling
+  ships on a stock machine. An authored DXF gives real files, a real ezdxf parse, exact
+  provenance, and an entity mix chosen to exercise what makes DWG *different*: layers, block
+  references, block ATTRIBs (tagged instrument bubbles), and dimension entities. The plan's
+  alternative ("source a public-domain sample DWG") gives weaker provenance, not stronger.
+  Binary `.dwg` ingest is still supported via the ODA auto-conversion hook when a converter
+  is installed.
+- **Drawing content (A):** layers PIPING/INSTRUMENTS/TEXT/NOTES/EQUIPMENT/DIMS; VALVE_GATE
+  block inserted twice with tag labels (26BL9072, 26BL9075); INSTR_BUBBLE block with TAG
+  ATTRIBs (PIT-9062, PSV-9066A); setpoint texts (`SP = 257 bar (g)`, `HH: 245`); a line
+  number; an MTEXT notes block; a linear dimension with text override `600`; a drain stub
+  LINE.
+
+| GT id | Edit | Old → New | Why |
+|---|---|---|---|
+| GT3-SP | Setpoint TEXT | `SP = 257 bar (g)` → `SP = 260 bar (g)` | Cross-format echo of Pair 1's key edit |
+| GT3-MOVE | VALVE_GATE INSERT (26BL9075) | (120, 38.5) → (128, 44.5) | Moved block, same layer/block: the §4.2 geometry-match rule's showcase; its label moves too |
+| GT3-DIM | Dimension override | `600` → `750` | Dimension-entity change, DWG-specific |
+| GT3-ADD-VALVE | New VALVE_GATE + label + tie-in LINE | added `43BL9020` | Added tagged geometry |
+| GT3-DEL-DRAIN | Drain stub LINE | removed | Pure geometry removal — no text key; only the geometry rule can catch it |
 
 ## Pair 5 — stress set (pending Phase 12)
 
