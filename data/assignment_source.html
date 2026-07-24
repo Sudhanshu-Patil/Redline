@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Applied AI Engineer — Take-Home: Document Delta &amp; Chat</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#161a21; --panel2:#1c222b; --ink:#e7ecf3; --mut:#9aa7b8;
+    --line:#2a323e; --brand:#4c8dff; --brand2:#7c5cff; --ok:#2fbf71; --warn:#f5a524; --bad:#ef5d5d;
+    --code:#0b0d11; --chip:#212936;
+    --maxw:960px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--brand); text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:var(--maxw); margin:0 auto; padding:0 22px}
+  header.hero{
+    background:
+      radial-gradient(1200px 400px at 10% -10%, rgba(76,141,255,.20), transparent 60%),
+      radial-gradient(900px 380px at 90% -20%, rgba(124,92,255,.18), transparent 60%),
+      linear-gradient(180deg,#12151b,#0f1115);
+    border-bottom:1px solid var(--line);
+    padding:54px 0 40px;
+  }
+  .kicker{display:inline-block; font-size:12px; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--mut); border:1px solid var(--line); padding:5px 11px; border-radius:999px; background:var(--panel)}
+  h1{font-size:36px; line-height:1.15; margin:16px 0 10px; letter-spacing:-.02em}
+  h1 .grad{background:linear-gradient(90deg,var(--brand),var(--brand2)); -webkit-background-clip:text; background-clip:text; color:transparent}
+  .sub{color:var(--mut); font-size:18px; max-width:70ch}
+  .meta{display:flex; flex-wrap:wrap; gap:10px; margin-top:22px}
+  .meta .chip{background:var(--chip); border:1px solid var(--line); border-radius:10px; padding:9px 13px; font-size:13.5px}
+  .meta .chip b{color:var(--ink)}
+  .meta .chip span{color:var(--mut)}
+  .due{border-color:rgba(245,165,36,.5); background:rgba(245,165,36,.10)}
+
+  h2{font-size:24px; margin:46px 0 6px; letter-spacing:-.01em; scroll-margin-top:20px}
+  h2 .num{color:var(--brand); font-variant-numeric:tabular-nums; margin-right:10px}
+  h3{font-size:18px; margin:26px 0 6px}
+  h4{font-size:15px; margin:18px 0 4px; color:var(--ink)}
+  p{margin:10px 0}
+  .lead{color:var(--mut)}
+  section{border-top:1px solid var(--line); padding-top:8px}
+  ul,ol{margin:10px 0 10px 2px; padding-left:22px}
+  li{margin:7px 0}
+  code{background:var(--code); border:1px solid var(--line); padding:1.5px 6px; border-radius:6px; font-size:13px;
+    font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace; color:#cfe0ff}
+  pre{background:var(--code); border:1px solid var(--line); border-radius:12px; padding:16px 18px; overflow:auto; font-size:13px; line-height:1.55}
+  pre code{background:none; border:0; padding:0; color:#c7d2e0}
+
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px 20px; margin:14px 0}
+  .grid{display:grid; gap:14px}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:1fr 1fr 1fr}
+  @media(max-width:760px){.g2,.g3{grid-template-columns:1fr}}
+  .pill{display:inline-block; font-size:11.5px; font-weight:600; padding:3px 9px; border-radius:999px; letter-spacing:.03em}
+  .must{background:rgba(239,93,93,.14); color:#ff9a9a; border:1px solid rgba(239,93,93,.35)}
+  .core{background:rgba(76,141,255,.14); color:#a9c7ff; border:1px solid rgba(76,141,255,.35)}
+  .bonus{background:rgba(47,191,113,.14); color:#8ee6b4; border:1px solid rgba(47,191,113,.35)}
+  .note{background:var(--panel2); border-left:3px solid var(--brand); border-radius:8px; padding:12px 16px; margin:14px 0; color:var(--mut)}
+  .note b{color:var(--ink)}
+
+  table{width:100%; border-collapse:collapse; margin:14px 0; font-size:14px}
+  th,td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top}
+  th{color:var(--mut); font-size:12px; text-transform:uppercase; letter-spacing:.06em}
+  tbody tr:hover{background:var(--panel)}
+  .term{color:#cfe0ff; font-weight:600; white-space:nowrap}
+
+  .toc{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px 20px; margin:26px 0}
+  .toc ol{columns:2; column-gap:34px; margin:6px 0 0; padding-left:20px}
+  @media(max-width:640px){.toc ol{columns:1}}
+  .toc a{color:var(--ink)}
+
+  .checklist{list-style:none; padding-left:0}
+  .checklist li{padding-left:28px; position:relative}
+  .checklist li:before{content:"›"; position:absolute; left:6px; top:0; color:var(--brand); font-weight:700}
+
+  .internal{background:linear-gradient(180deg, rgba(239,93,93,.07), transparent 30%); border:1px dashed rgba(239,93,93,.55); border-radius:14px; padding:6px 22px 20px; margin-top:30px}
+  .internal .banner{background:rgba(239,93,93,.16); border:1px solid rgba(239,93,93,.4); color:#ffb3b3; border-radius:10px; padding:10px 14px; margin:16px 0; font-size:13.5px; font-weight:600}
+
+  svg{max-width:100%; height:auto}
+  footer{border-top:1px solid var(--line); color:var(--mut); font-size:13px; padding:30px 0 60px; margin-top:40px}
+  .small{font-size:13px; color:var(--mut)}
+  hr.soft{border:0; border-top:1px solid var(--line); margin:26px 0}
+
+  @media print{
+    body{background:#fff; color:#111}
+    header.hero{background:#fff}
+    .card,.toc,.note,.internal{border-color:#ccc}
+    code,pre{background:#f4f4f4; color:#111; border-color:#ddd}
+    a{color:#111}
+    .grad{color:#111 !important}
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="kicker">Full-Time Hiring · Take-Home Assignment</span>
+    <h1>Applied AI Engineer —<br><span class="grad">Document Delta &amp; Grounded Chat</span></h1>
+    <p class="sub">Build a system that takes two document revisions, computes the meaningful <b>delta</b> between them,
+    produces a delta report, and lets a user <b>chat</b> with both documents and that report. Formats in scope:
+    native PDF, scanned PDF, and DWG.</p>
+
+    <div class="meta">
+      <div class="chip"><span>Role</span> · <b>Applied AI / ML Engineer</b></div>
+      <div class="chip"><span>Scope</span> · <b>Format-agnostic pipeline</b></div>
+      <div class="chip"><span>LLM</span> · <b>Any provider</b></div>
+      <div class="chip due"><span>Due</span> · <b>Saturday, 11:59 PM</b></div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="toc">
+    <b>Contents</b>
+    <ol>
+      <li><a href="#context">The problem</a></li>
+      <li><a href="#glossary">Domain language</a></li>
+      <li><a href="#build">What you'll build</a></li>
+      <li><a href="#tech">Technical requirements</a></li>
+      <li><a href="#obs">Observability</a></li>
+      <li><a href="#eval">Evaluation harness</a></li>
+      <li><a href="#arch">Reference architecture</a></li>
+      <li><a href="#repo">Expected repo scaffold</a></li>
+      <li><a href="#accept">Acceptance criteria</a></li>
+      <li><a href="#submit">Submission</a></li>
+      <li><a href="#faq">FAQ &amp; constraints</a></li>
+      <li><a href="#rubric">Internal rubric</a></li>
+    </ol>
+  </div>
+
+  <!-- 1 -->
+  <section id="context">
+    <h2><span class="num">01</span>The problem</h2>
+    <p>Teams that work with engineering and technical documents — drawings, specs, plan sets, P&amp;IDs — constantly
+    deal with <b>revisions</b>. Rev B replaces Rev A; a scanned as-built supersedes a drawing; a redlined markup goes
+    back to the CAD file. The recurring, expensive question is always the same: <b>“what actually changed between
+    these two, and does it matter?”</b></p>
+
+    <p>Today that comparison is manual, slow, and error-prone. Someone flips between two documents, eyeballs the
+    differences, and hopes they didn't miss a changed dimension, a deleted note, a moved valve, or a revised tolerance.</p>
+
+    <p>Your task is to build the core of a tool that automates this. Given <b>two PIDs</b> (each a reference to a
+    document revision), the system should ingest both regardless of format, compute a structured <b>delta</b>, produce
+    a human-readable <b>delta report</b>, and expose a <b>chat</b> interface grounded in the two documents and the delta
+    so a user can ask questions like <i>“what changed on sheet 3?”</i> or <i>“did any dimensions change near the pump?”</i>
+    and get a cited, trustworthy answer.</p>
+
+    <div class="note">
+      <b>Why this assignment.</b> It is deliberately open-ended and mirrors real Applied AI work: messy multi-format
+      inputs, a retrieval/reasoning layer, an LLM you don't fully control, and a hard requirement that the result be
+      <b>observable</b> and <b>measurable</b>. We care far more about your judgment, trade-offs, and evaluation rigor
+      than about a pixel-perfect UI.
+    </div>
+  </section>
+
+  <!-- 2 -->
+  <section id="glossary">
+    <h2><span class="num">02</span>Domain language</h2>
+    <p class="lead">Use this vocabulary consistently in your code, comments, and report. It is the shared language of
+    the domain and of this assignment.</p>
+
+    <table>
+      <thead><tr><th>Term</th><th>Meaning in this assignment</th></tr></thead>
+      <tbody>
+        <tr><td class="term">PID</td><td>The persistent identifier for a single document/drawing revision in the system. You are given <b>two PIDs</b> that reference two revisions of the same underlying document. Treat a PID as the handle you resolve to raw bytes + metadata (format, page/sheet count, revision label). <span class="small">(Not to be confused with a <b>P&amp;ID</b> — see below — though the two often coincide in this domain.)</span></td></tr>
+        <tr><td class="term">Delta</td><td>The set of <b>meaningful changes</b> from PID&nbsp;A (base) to PID&nbsp;B (revised): additions, deletions, and modifications. A delta is structured (typed, located, described) — not just a raw pixel or text diff.</td></tr>
+        <tr><td class="term">Delta report</td><td>The human-readable, machine-parseable artifact summarizing the delta: what changed, where (page/sheet/region), change type, and a confidence signal. This report is itself a retrievable source for chat.</td></tr>
+        <tr><td class="term">Markup <span class="pill bonus">bonus</span></td><td>A visual overlay that draws the delta back onto the document (e.g., boxes/highlights on the changed regions, redline-style annotations). The classic manual artifact this tool replaces.</td></tr>
+        <tr><td class="term">Native PDF</td><td>A PDF with an extractable text/vector layer (born-digital). Text, coordinates, and often tables can be read directly.</td></tr>
+        <tr><td class="term">Scanned PDF</td><td>A raster/image PDF with no reliable text layer — a photo or scan. Requires OCR and/or vision to recover content and layout.</td></tr>
+        <tr><td class="term">DWG</td><td>A native CAD drawing file (AutoCAD). Vector geometry, layers, blocks, text entities, and dimensions. Rich structure, but a binary format that needs a parser/converter.</td></tr>
+        <tr><td class="term">P&amp;ID</td><td>Piping &amp; Instrumentation Diagram — a common document type in this space. Mentioned so the <code>PID</code> abbreviation is unambiguous: in this assignment <code>PID</code> = document identifier, not the diagram type.</td></tr>
+        <tr><td class="term">OCR</td><td>Optical Character Recognition — recovering text (and ideally bounding boxes) from a raster page.</td></tr>
+        <tr><td class="term">Canonical representation</td><td>The <b>format-agnostic intermediate model</b> your pipeline normalizes every input into, so the delta engine and chat layer never care whether the source was PDF, scan, or DWG. Designing this well is the crux of the assignment.</td></tr>
+        <tr><td class="term">Grounding</td><td>Ensuring every chat answer is traceable to specific source content (a PID + location, or a delta-report entry) rather than model imagination. Answers should carry citations.</td></tr>
+        <tr><td class="term">Retrieval (RAG)</td><td>Selecting the relevant slices of the two PIDs and the delta report to condition the LLM on, at query time.</td></tr>
+        <tr><td class="term">Ground truth</td><td>Human-labeled “correct” deltas / answers for a handful of document pairs, used by your eval harness to score the system.</td></tr>
+        <tr><td class="term">Trace</td><td>The end-to-end record of one request (ingest → delta → retrieve → LLM → answer) with timings, token/cost, inputs, and outputs, for observability.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- 3 -->
+  <section id="build">
+    <h2><span class="num">03</span>What you'll build</h2>
+    <p class="lead">Five capabilities. The pipeline, delta, report, and chat are <span class="pill core">core</span>.
+    Observability and eval are <span class="pill must">required</span>. Markup is a <span class="pill bonus">bonus</span>.</p>
+
+    <div class="grid g2">
+      <div class="card">
+        <h3>A. Format-agnostic ingestion <span class="pill core">core</span></h3>
+        <p>Resolve a PID to bytes, detect the format, and normalize it into your <b>canonical representation</b>. Design
+        an abstraction where new formats plug in behind one interface. You must <b>demonstrate at least two of the three
+        formats</b> working end-to-end (native PDF + one of scanned PDF / DWG). The third may be stubbed but the seam
+        must be real, not hypothetical.</p>
+      </div>
+      <div class="card">
+        <h3>B. Delta engine <span class="pill core">core</span></h3>
+        <p>Given two canonical documents, compute a structured delta: <code>added</code> / <code>removed</code> /
+        <code>modified</code> items, each with a type (text, dimension, note, geometry, table cell…), a location
+        (page/sheet + region), a description, and a confidence. Be explicit about how you align content between
+        revisions — matching is the hard part, not diffing.</p>
+      </div>
+      <div class="card">
+        <h3>C. Delta report <span class="pill core">core</span></h3>
+        <p>Render the delta as a report that is both human-readable and machine-parseable (e.g., Markdown/HTML +
+        JSON). It should summarize counts, group changes sensibly, and be a first-class <b>retrievable source</b> for
+        chat.</p>
+      </div>
+      <div class="card">
+        <h3>D. Grounded chat <span class="pill core">core</span></h3>
+        <p>A chat interface (CLI, API, or minimal web UI — your call) that answers questions over <b>both PIDs and the
+        delta report</b>. Answers must be <b>grounded</b> with citations back to a PID + location or a delta entry.
+        Handle “what changed?” style questions and content questions about either revision.</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>E. Delta markup <span class="pill bonus">bonus</span></h3>
+      <p>Overlay the computed delta visually on the document — bounding boxes / highlights / redline annotations on the
+      changed regions, exported as an annotated PDF or image. Strong signal if you get even a partial version working,
+      but do not sacrifice A–D for it.</p>
+    </div>
+  </section>
+
+  <!-- 4 -->
+  <section id="tech">
+    <h2><span class="num">04</span>Technical requirements &amp; constraints</h2>
+    <ul>
+      <li><b>Language / stack:</b> your choice. Python is expected for the AI/ML core but not mandatory.</li>
+      <li><b>LLM:</b> <b>any provider or model</b> (hosted or local). Keep it swappable behind an interface and read
+      credentials from env vars. Never commit keys.</li>
+      <li><b>Determinism:</b> the delta engine's structural output should be reproducible; isolate LLM
+      non-determinism and document where it lives.</li>
+      <li><b>Config over hardcoding:</b> model, thresholds, and paths configurable.</li>
+      <li><b>Reproducible run:</b> a single documented command (or <code>docker compose up</code>) that ingests a
+      provided pair and produces a delta report + lets us chat.</li>
+      <li><b>Sample data:</b> include at least <b>2–3 document pairs</b> you used (or synthesize them — e.g., edit a PDF
+      and re-export, scan/photograph a printout, tweak a DWG). Document their provenance.</li>
+      <li><b>No key or PII</b> committed to the repo.</li>
+    </ul>
+
+    <div class="note"><b>Depth over breadth.</b> A narrow system that ingests two formats, computes a genuinely useful
+    delta, chats with citations, and is <b>well-instrumented and well-evaluated</b> beats a sprawling one that does
+    everything shallowly. Cut scope deliberately and write down what you cut and why.</div>
+  </section>
+
+  <!-- 5 -->
+  <section id="obs">
+    <h2><span class="num">05</span>Observability <span class="pill must">required</span></h2>
+    <p>The repo must ship with real observability — not just <code>print</code> statements. We want to open your project
+    and <b>see what the system did</b> on a given request.</p>
+    <ul class="checklist">
+      <li><b>Tracing:</b> each request produces a trace spanning ingest → delta → retrieval → LLM call → answer, with per-stage timing.</li>
+      <li><b>LLM telemetry:</b> capture prompts, responses, model name, token counts, and estimated cost per call.</li>
+      <li><b>Structured logging:</b> JSON logs with a correlation/request id, not free-text.</li>
+      <li><b>Metrics:</b> latency, token/cost, delta counts, retrieval hit stats — surfaced somewhere inspectable (a dashboard, a served metrics endpoint, or at minimum a written trace file per run).</li>
+      <li><b>Failure visibility:</b> errors (bad OCR, unparseable DWG, LLM timeout) are captured and traceable, not swallowed.</li>
+    </ul>
+    <p class="small">Any tooling is fine — OpenTelemetry, Langfuse/Phoenix/LangSmith, Prometheus + Grafana, or a
+    well-designed homegrown tracer. Justify your choice in the README.</p>
+  </section>
+
+  <!-- 6 -->
+  <section id="eval">
+    <h2><span class="num">06</span>Evaluation harness <span class="pill must">required</span></h2>
+    <p>An evaluation harness must live <b>in the repo</b> and be runnable. This is where an Applied AI Engineer is judged
+    most sharply: can you tell whether your system is actually good, and prove it changed for the better or worse?</p>
+    <ul class="checklist">
+      <li><b>Eval dataset:</b> a small labeled set — document pairs with expected deltas, plus Q&amp;A pairs over them (ground truth).</li>
+      <li><b>Delta metrics:</b> precision / recall / F1 on detected changes (did you find the real changes, and avoid inventing fake ones?).</li>
+      <li><b>Chat metrics:</b> answer correctness and <b>groundedness / citation accuracy</b> (LLM-as-judge is acceptable if you validate the judge).</li>
+      <li><b>Runnable command:</b> <code>make eval</code> (or equivalent) prints a scorecard.</li>
+      <li><b>Regression-friendly:</b> results are comparable across runs so a change can be shown to help or hurt.</li>
+      <li><b>Honesty:</b> report where the system fails. A candid failure table is a strong positive signal.</li>
+    </ul>
+  </section>
+
+  <!-- 7 -->
+  <section id="arch">
+    <h2><span class="num">07</span>Reference architecture <span class="small">(suggested, not prescriptive)</span></h2>
+    <p class="lead">One reasonable shape. You may diverge — just explain your reasoning. The key idea is the
+    <b>canonical representation</b> seam that decouples ingestion formats from everything downstream.</p>
+
+    <svg viewBox="0 0 920 430" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Reference architecture diagram">
+      <defs>
+        <marker id="arw" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+          <path d="M0,0 L7,3 L0,6 Z" fill="#7f8ea3"/>
+        </marker>
+        <style>
+          .b{fill:#1c222b;stroke:#2f3b49}
+          .bb{fill:#182233;stroke:#3a5170}
+          .bg{fill:#15241d;stroke:#2f5a44}
+          .t{fill:#e7ecf3;font:600 13px -apple-system,Segoe UI,Roboto,sans-serif}
+          .s{fill:#9aa7b8;font:11px -apple-system,Segoe UI,Roboto,sans-serif}
+          .l{stroke:#7f8ea3;stroke-width:1.5;fill:none}
+          .cap{fill:#6f7d90;font:11px -apple-system,Segoe UI,Roboto,sans-serif}
+        </style>
+      </defs>
+
+      <!-- inputs -->
+      <text x="20" y="24" class="cap">INPUTS · two PIDs</text>
+      <rect class="b" x="20" y="34" width="150" height="34" rx="8"/><text x="34" y="55" class="t">Native PDF</text>
+      <rect class="b" x="20" y="76" width="150" height="34" rx="8"/><text x="34" y="97" class="t">Scanned PDF</text>
+      <rect class="b" x="20" y="118" width="150" height="34" rx="8"/><text x="34" y="139" class="t">DWG</text>
+
+      <!-- adapters -->
+      <text x="210" y="24" class="cap">FORMAT ADAPTERS</text>
+      <rect class="bb" x="210" y="34" width="170" height="118" rx="10"/>
+      <text x="224" y="60" class="t">Ingestion layer</text>
+      <text x="224" y="80" class="s">· PDF text/vector extract</text>
+      <text x="224" y="98" class="s">· OCR + layout (scans)</text>
+      <text x="224" y="116" class="s">· DWG parser / convert</text>
+      <text x="224" y="140" class="s">one interface, N formats</text>
+
+      <!-- canonical -->
+      <text x="430" y="24" class="cap">NORMALIZE</text>
+      <rect class="bg" x="430" y="34" width="150" height="118" rx="10"/>
+      <text x="444" y="66" class="t">Canonical</text>
+      <text x="444" y="84" class="t">representation</text>
+      <text x="444" y="108" class="s">pages/sheets,</text>
+      <text x="444" y="124" class="s">text+geometry,</text>
+      <text x="444" y="140" class="s">bounding boxes</text>
+
+      <!-- delta -->
+      <text x="630" y="24" class="cap">CORE</text>
+      <rect class="bb" x="630" y="34" width="270" height="55" rx="10"/>
+      <text x="646" y="58" class="t">Delta engine</text>
+      <text x="646" y="77" class="s">align → classify add/remove/modify → confidence</text>
+
+      <rect class="b" x="630" y="97" width="270" height="55" rx="10"/>
+      <text x="646" y="121" class="t">Delta report  (MD/HTML + JSON)</text>
+      <text x="646" y="140" class="s">retrievable source · feeds markup (bonus)</text>
+
+      <!-- retrieval + llm -->
+      <text x="210" y="210" class="cap">GROUNDED CHAT</text>
+      <rect class="b" x="210" y="222" width="200" height="70" rx="10"/>
+      <text x="224" y="248" class="t">Index / retrieval</text>
+      <text x="224" y="268" class="s">PID A · PID B ·</text>
+      <text x="224" y="284" class="s">delta report</text>
+
+      <rect class="bb" x="430" y="222" width="200" height="70" rx="10"/>
+      <text x="444" y="248" class="t">LLM (any)</text>
+      <text x="444" y="268" class="s">swappable behind</text>
+      <text x="444" y="284" class="s">one interface</text>
+
+      <rect class="bg" x="650" y="222" width="250" height="70" rx="10"/>
+      <text x="664" y="248" class="t">Answer + citations</text>
+      <text x="664" y="268" class="s">grounded to PID+location</text>
+      <text x="664" y="284" class="s">or delta entry</text>
+
+      <!-- cross-cutting -->
+      <rect class="b" x="210" y="330" width="330" height="60" rx="10" stroke-dasharray="5 4"/>
+      <text x="224" y="356" class="t">Observability (required)</text>
+      <text x="224" y="376" class="s">traces · tokens/cost · structured logs · metrics</text>
+
+      <rect class="b" x="560" y="330" width="340" height="60" rx="10" stroke-dasharray="5 4"/>
+      <text x="574" y="356" class="t">Eval harness (required)</text>
+      <text x="574" y="376" class="s">delta P/R/F1 · answer &amp; groundedness · scorecard</text>
+
+      <!-- arrows -->
+      <line class="l" x1="170" y1="51"  x2="208" y2="70"  marker-end="url(#arw)"/>
+      <line class="l" x1="170" y1="93"  x2="208" y2="93"  marker-end="url(#arw)"/>
+      <line class="l" x1="170" y1="135" x2="208" y2="116" marker-end="url(#arw)"/>
+      <line class="l" x1="380" y1="93"  x2="428" y2="93"  marker-end="url(#arw)"/>
+      <line class="l" x1="580" y1="80"  x2="628" y2="62"  marker-end="url(#arw)"/>
+      <line class="l" x1="765" y1="89"  x2="765" y2="95"  marker-end="url(#arw)"/>
+      <line class="l" x1="505" y1="152" x2="360" y2="220" marker-end="url(#arw)"/>
+      <line class="l" x1="410" y1="257" x2="428" y2="257" marker-end="url(#arw)"/>
+      <line class="l" x1="630" y1="257" x2="648" y2="257" marker-end="url(#arw)"/>
+    </svg>
+  </section>
+
+  <!-- 8 -->
+  <section id="repo">
+    <h2><span class="num">08</span>Expected repo scaffold</h2>
+    <p class="lead">A guide, not a mandate — but we expect a clear separation of ingestion, delta, chat, observability,
+    and eval, plus a README that lets us run everything.</p>
+<pre><code>delta-chat/
+├─ README.md                 # setup, run, design decisions, trade-offs, what you cut
+├─ .env.example              # required env vars (NO real keys)
+├─ Makefile                  # make run / make chat / make eval / make markup
+├─ docker-compose.yml        # optional but appreciated
+├─ pyproject.toml            # or requirements.txt / package.json
+│
+├─ src/
+│  ├─ ingest/
+│  │  ├─ base.py             # FormatAdapter interface -> canonical repr
+│  │  ├─ pdf_native.py
+│  │  ├─ pdf_scanned.py      # OCR + layout
+│  │  └─ dwg.py              # (may be a real stub behind the same seam)
+│  ├─ canonical/
+│  │  └─ model.py            # the format-agnostic representation
+│  ├─ delta/
+│  │  ├─ align.py            # content matching between revisions
+│  │  ├─ engine.py           # add / remove / modify + confidence
+│  │  └─ report.py           # MD/HTML + JSON delta report
+│  ├─ chat/
+│  │  ├─ index.py            # retrieval over PID A, PID B, delta report
+│  │  ├─ llm.py              # provider-agnostic client
+│  │  └─ answer.py           # grounded answer + citations
+│  ├─ markup/                # bonus: overlay delta on the document
+│  └─ observability/
+│     ├─ tracing.py
+│     └─ logging.py
+│
+├─ eval/
+│  ├─ datasets/              # labeled pairs + Q&A ground truth
+│  ├─ metrics.py             # delta P/R/F1, groundedness, correctness
+│  └─ run_eval.py            # prints a scorecard
+│
+├─ data/samples/            # 2–3 document pairs with provenance notes
+└─ tests/</code></pre>
+  </section>
+
+  <!-- 9 -->
+  <section id="accept">
+    <h2><span class="num">09</span>Acceptance criteria — definition of done</h2>
+    <div class="grid g2">
+      <div class="card">
+        <h4>Core (must pass)</h4>
+        <ul class="checklist">
+          <li>Ingests <b>≥2 of 3</b> formats behind one adapter interface.</li>
+          <li>Produces a structured delta (typed, located, confidence) for a provided pair.</li>
+          <li>Emits a delta report that is human- and machine-readable.</li>
+          <li>Chat answers questions over both PIDs + the delta, <b>with citations</b>.</li>
+          <li>One documented command runs ingest → report → chat.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h4>Required cross-cutting</h4>
+        <ul class="checklist">
+          <li>Per-request <b>traces</b> with stage timings + LLM token/cost.</li>
+          <li>Structured logs with a correlation id.</li>
+          <li><b>Eval harness</b> runnable via one command, prints a scorecard.</li>
+          <li>Delta + chat <b>metrics</b> reported, including at least one failure case.</li>
+          <li>No secrets committed; <code>.env.example</code> present.</li>
+        </ul>
+      </div>
+    </div>
+    <p><span class="pill bonus">bonus</span> Working (even partial) delta <b>markup</b> overlay · all three formats ·
+    a small served UI/dashboard · thoughtful retrieval evaluation · cost/latency budget analysis.</p>
+  </section>
+
+  <!-- 10 -->
+  <section id="submit">
+    <h2><span class="num">10</span>Submission</h2>
+    <ul>
+      <li><b>Due:</b> <b>Saturday, 11:59 PM</b> (your local time). If you run short, submit what works and clearly note what's incomplete — we value honest scoping.</li>
+      <li><b>How:</b> a Git repository (link or zip) with full history. A clean, readable history is a plus.</li>
+      <li><b>README must cover:</b> how to run, key design decisions and trade-offs, what you deliberately cut, your observability + eval approach, and (a short section) <b>what you'd do next with more time</b>.</li>
+      <li><b>Include:</b> a 2–4 minute walkthrough (screen recording or a <code>DEMO.md</code>) showing one delta + one grounded chat exchange, and your eval scorecard output.</li>
+      <li><b>AI-assisted coding is allowed and expected.</b> You own every line — be ready to explain and defend your choices in the follow-up.</li>
+    </ul>
+    <p class="small">Expected effort is a focused build within the window — we are not looking for a polished product,
+    we are looking for how you think, scope, instrument, and evaluate.</p>
+  </section>
+
+  <!-- 11 -->
+  <section id="faq">
+    <h2><span class="num">11</span>FAQ &amp; constraints</h2>
+    <h4>Does “PID” mean a P&amp;ID diagram?</h4>
+    <p>No — here <code>PID</code> is a document identifier. You are handed two PIDs (two revisions). The documents
+    <i>may</i> happen to be P&amp;IDs, engineering drawings, or plan sheets, but treat a PID purely as a resolvable
+    reference to one revision's bytes + metadata.</p>
+
+    <h4>Which two formats should I prioritize?</h4>
+    <p>Native PDF + scanned PDF is the pragmatic pair (OCR shows off Applied AI judgment). DWG is the most impressive if
+    you can parse or convert it, but it's fine to keep DWG as a real stub behind the adapter seam.</p>
+
+    <h4>How “smart” must the delta be?</h4>
+    <p>Smarter than a raw text/pixel diff. We want change <i>alignment and classification</i> with locations and
+    confidence. You choose how much LLM vs. deterministic logic to use — and justify it.</p>
+
+    <h4>Can I use frameworks (LangChain, LlamaIndex, etc.)?</h4>
+    <p>Yes, any. We care that you understand what they do under the hood and can instrument and evaluate them.</p>
+
+    <h4>What if I can't find real DWG/scanned samples?</h4>
+    <p>Synthesize them: export a PDF twice with edits, print-and-scan (or photograph) a page, or edit a sample DWG.
+    Document provenance in <code>data/samples/</code>.</p>
+  </section>
+
+  <!-- INTERNAL -->
+  <section id="rubric" class="internal">
+    <div class="banner">⚠ INTERNAL — HIRING PANEL ONLY. Remove this entire section before sending the assignment to candidates.</div>
+    <h2 style="border:0;padding-top:0"><span class="num">12</span>Evaluation rubric</h2>
+    <p class="lead">Score each dimension 1–5. Weighted total out of 100. Anchor scores in evidence from the repo, README,
+    and follow-up conversation. This assignment is intentionally under-constrained; reward <b>judgment and honesty</b>,
+    not checklist completion.</p>
+
+    <table>
+      <thead><tr><th>Dimension</th><th>Weight</th><th>What a 5 looks like</th></tr></thead>
+      <tbody>
+        <tr><td class="term">Pipeline design</td><td>15%</td><td>Clean canonical-representation seam; formats plug in behind one interface; the abstraction would genuinely survive adding a 4th format.</td></tr>
+        <tr><td class="term">Delta quality</td><td>20%</td><td>Real alignment + classification with locations and confidence; handles moved/modified content, not just added/removed text; sensible on their own eval set.</td></tr>
+        <tr><td class="term">Grounded chat</td><td>15%</td><td>Retrieval spans both PIDs + report; answers cite specific sources; refuses / hedges when unsupported instead of hallucinating.</td></tr>
+        <tr><td class="term">Observability</td><td>15%</td><td>End-to-end traces, token/cost telemetry, structured logs, inspectable metrics; failures are visible, not swallowed.</td></tr>
+        <tr><td class="term">Evaluation rigor</td><td>20%</td><td>Labeled dataset; meaningful delta + groundedness metrics; runnable scorecard; comparable across runs; <b>candid failure reporting</b>.</td></tr>
+        <tr><td class="term">Engineering &amp; docs</td><td>10%</td><td>Reproducible run, clear README with trade-offs and cuts, tests where they matter, no secrets, readable code.</td></tr>
+        <tr><td class="term">Communication &amp; scoping</td><td>5%</td><td>Deliberate scope cuts explained; demo is crisp; “what's next” shows product + technical maturity.</td></tr>
+      </tbody>
+    </table>
+
+    <h4>Bonus (up to +8, capped at 100)</h4>
+    <p class="small">Working delta markup overlay (+4) · all three formats end-to-end (+2) · retrieval-quality
+    evaluation or cost/latency budget analysis (+2).</p>
+
+    <h4>Auto-flags for discussion (not auto-fail)</h4>
+    <p class="small">Committed secrets · LLM used where deterministic logic was clearly better (or vice versa) · eval that
+    can't detect a regression · “it works” claims with no trace/metric to back them · delta that is a thin wrapper over
+    a raw text diff.</p>
+
+    <h4>Leveling signal</h4>
+    <table>
+      <thead><tr><th>Band</th><th>Read</th></tr></thead>
+      <tbody>
+        <tr><td class="term">Strong hire</td><td>Depth in delta + eval, honest about limits, instrumentation you'd actually trust in prod. Would ship with guidance.</td></tr>
+        <tr><td class="term">Hire</td><td>Solid core + required cross-cutting; some rough edges; clear reasoning.</td></tr>
+        <tr><td class="term">Lean no</td><td>Core works but observability/eval are token; can't tell if the system is good.</td></tr>
+        <tr><td class="term">No</td><td>Raw diff + ungrounded chatbot, no eval, no traces, no scoping judgment.</td></tr>
+      </tbody>
+    </table>
+
+    <h4>Suggested follow-up questions</h4>
+    <ul class="small">
+      <li>Walk me through how you align content between two revisions. Where does it break?</li>
+      <li>Where is the LLM in your delta path, and why there and not elsewhere?</li>
+      <li>Show me a trace for a slow or failed request.</li>
+      <li>How would your eval catch a regression you introduced tomorrow?</li>
+      <li>What would you do differently for a 500-sheet P&amp;ID set?</li>
+    </ul>
+  </section>
+
+  <footer>
+    <hr class="soft">
+    Applied AI Engineer take-home · Document Delta &amp; Grounded Chat · v1 (2026-07-23).
+    Candidate-facing sections 01–11. Section 12 is internal — strip before distribution.
+  </footer>
+
+</div>
+</body>
+</html>

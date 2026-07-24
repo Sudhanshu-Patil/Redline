@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+dist/
+build/
+
+# uv
+.python-version
+
+# Env / secrets
+.env
+*.env.local
+
+# Data artifacts generated at runtime (keep committed sample inputs, ignore generated outputs)
+traces/*.jsonl
+traces/*.json
+!traces/.gitkeep
+data/samples/generated/
+chroma_db/
+*.db
+
+# Models cache
+.cache/
+models_cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
