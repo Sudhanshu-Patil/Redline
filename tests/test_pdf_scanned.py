@@ -11,7 +11,27 @@ from src.ingest.pdf_scanned import (
     clean_ocr_line_text,
     cluster_lines_spatially,
     group_tsv_into_lines,
+    resolve_tesseract_cmd,
 )
+
+
+class TestResolveTesseractCmd:
+    def test_explicit_config_wins(self, monkeypatch):
+        monkeypatch.setattr(settings, "tesseract_cmd", r"C:\custom\tesseract.exe")
+        assert resolve_tesseract_cmd() == r"C:\custom\tesseract.exe"
+
+    def test_path_lookup_used_when_no_config(self, monkeypatch):
+        monkeypatch.setattr(settings, "tesseract_cmd", "")
+        monkeypatch.setattr("shutil.which", lambda _: "/usr/bin/tesseract")
+        assert resolve_tesseract_cmd() == "/usr/bin/tesseract"
+
+    def test_none_when_nothing_found(self, monkeypatch):
+        monkeypatch.setattr(settings, "tesseract_cmd", "")
+        monkeypatch.setattr("shutil.which", lambda _: None)
+        monkeypatch.setattr(
+            "src.ingest.pdf_scanned._WINDOWS_TESSERACT_DEFAULTS", []
+        )
+        assert resolve_tesseract_cmd() is None
 
 
 @pytest.mark.parametrize(
@@ -242,3 +262,25 @@ class TestVisionFallback:
         noise = _element("*", conf=0.1)
         self._run([noise], vision)
         assert vision.calls == []
+
+    def test_vision_call_failure_marks_element_and_continues(self):
+        class ExplodingVision:
+            @property
+            def is_configured(self):
+                return True
+
+            def read_image_text(self, png_bytes, context_hint=""):
+                raise ConnectionError("network down")
+
+        low = _element("readable text", conf=0.2)
+        self._run([low], ExplodingVision())
+        assert low.text == "readable text"  # original kept
+        assert low.attributes["ocr_fallback"] == "error"
+
+
+def test_ingest_raises_clear_error_when_tesseract_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(settings, "tesseract_cmd", "")
+    monkeypatch.setattr("shutil.which", lambda _: None)
+    monkeypatch.setattr("src.ingest.pdf_scanned._WINDOWS_TESSERACT_DEFAULTS", [])
+    with pytest.raises(RuntimeError, match="tesseract"):
+        PdfScannedAdapter().ingest(tmp_path / "any.pdf", pid="x")

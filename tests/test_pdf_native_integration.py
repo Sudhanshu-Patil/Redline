@@ -83,6 +83,14 @@ def test_bbox_normalized_stays_within_unit_square(doc: CanonicalDocument):
         assert -0.01 <= y1 <= 1.01
 
 
+def test_ingest_is_deterministic():
+    """Two runs over the same PDF must produce identical canonical output --
+    the delta engine's classification path depends on this (BRIEF rule 2)."""
+    a = PdfNativeAdapter().ingest(SAMPLE, pid="det_check")
+    b = PdfNativeAdapter().ingest(SAMPLE, pid="det_check")
+    assert a.model_dump() == b.model_dump()
+
+
 def test_second_sample_pdf_also_ingests_without_error():
     other = Path("data/samples/originals/export_gas_compressor_26-KA-902.pdf")
     if not other.exists():
