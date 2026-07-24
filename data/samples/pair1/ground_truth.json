@@ -1,0 +1,115 @@
+{
+  "pair_id": "pair1",
+  "negative_control": false,
+  "expected_deltas": [
+    {
+      "gt_id": "GT-SP-9066A",
+      "change_type": "modified",
+      "element_type": "setpoint",
+      "old_text": "SP = 257 bar (g)",
+      "new_text": "SP = 260 bar (g)",
+      "locator": {
+        "page": 0,
+        "bbox": [
+          840.0,
+          60.220088958740234,
+          876.2857055664062,
+          65.95333099365234
+        ],
+        "near_text": "PSV-9066A"
+      },
+      "rationale": "Relief set pressure uprated at PSV-9066A; tests duplicate-text disambiguation (two identical SP strings on one sheet)."
+    },
+    {
+      "gt_id": "GT-SP-9066B",
+      "change_type": "modified",
+      "element_type": "setpoint",
+      "old_text": "SP = 257 bar (g)",
+      "new_text": "SP = 260 bar (g)",
+      "locator": {
+        "page": 0,
+        "bbox": [
+          1038.0,
+          68.860107421875,
+          1074.28564453125,
+          74.59334564208984
+        ],
+        "near_text": "PSV-9066B"
+      },
+      "rationale": "Relief set pressure uprated at PSV-9066B; tests duplicate-text disambiguation (two identical SP strings on one sheet)."
+    },
+    {
+      "gt_id": "GT-HH-9062",
+      "change_type": "modified",
+      "element_type": "setpoint",
+      "old_text": "HH: 245",
+      "new_text": "HH: 250",
+      "locator": {
+        "page": 0,
+        "bbox": [
+          652.7999877929688,
+          142.54010009765625,
+          671.49609375,
+          148.27333068847656
+        ],
+        "near_text": "PIT-9062"
+      },
+      "rationale": "Trip limit change on an instrument bubble annotation -- the classic 'small number nobody notices' revision."
+    },
+    {
+      "gt_id": "GT-FLOW",
+      "change_type": "modified",
+      "element_type": "text_block",
+      "old_text": "19057",
+      "new_text": "20500",
+      "locator": {
+        "page": 0,
+        "bbox": [
+          153.36000061035156,
+          567.340087890625,
+          167.89373779296875,
+          573.0733032226562
+        ],
+        "near_text": "FLOW RATE"
+      },
+      "rationale": "Design-basis table value change, far from any tag key -- exercises embedding/proximity matching rather than exact-key matching."
+    },
+    {
+      "gt_id": "GT-NOTE30-DEL",
+      "change_type": "removed",
+      "element_type": "note",
+      "old_text": "30. SAFETY CRITICAL HEAT TRACING - HYDRATE MITIGATION (25°C)",
+      "new_text": null,
+      "locator": {
+        "page": 0,
+        "bbox": [
+          253.0800018310547,
+          776.4320678710938,
+          408.6312255859375,
+          781.9359741210938
+        ],
+        "near_text": "29."
+      },
+      "rationale": "Deleted note definition; its three on-drawing NOTE 30 callouts are left in place (documented dangling-reference case)."
+    },
+    {
+      "gt_id": "GT-NOTE37-ADD",
+      "change_type": "added",
+      "element_type": "note",
+      "old_text": null,
+      "new_text": "37. PSV 9066A/B SET PRESSURE REVISED TO 260 BAR(G).",
+      "locator": {
+        "page": 0,
+        "bbox": [
+          511.55999755859375,
+          689.7921044921875,
+          711.5599975585938,
+          695.2960107421875
+        ],
+        "near_text": "36."
+      },
+      "rationale": "Added MOC-style note recording the PSV set-pressure change."
+    }
+  ],
+  "notes": "B was produced from A by scripts/synthesize_pairs.py. The three on-drawing 'NOTE 30' callouts intentionally remain after the note-30 definition was deleted; they are NOT ground-truth changes. The title-block revision was deliberately not bumped -- the edit list is exactly the six entries here."
+}

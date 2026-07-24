@@ -1,4 +1,4 @@
-.PHONY: sync lint typecheck test check run chat eval eval-diff metrics dashboard
+.PHONY: sync lint typecheck test check run data chat eval eval-diff metrics dashboard
 
 sync:
 	uv sync
@@ -18,6 +18,9 @@ check: lint typecheck test
 
 run:
 	uv run python -m src.ingest.pdf_native "data/samples/originals/lift_gas_compressor_26-KA-901.pdf" lift_gas_A
+
+data:
+	uv run python scripts/synthesize_pairs.py
 
 chat:
 	@echo "TODO: wire up in Phase 8 (grounded chat CLI)"

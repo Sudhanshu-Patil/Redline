@@ -1,0 +1,6 @@
+{
+  "pair_id": "pair4",
+  "negative_control": true,
+  "expected_deltas": [],
+  "notes": "26-KA-901 (Lift Gas Compressor) vs 26-KA-902 (Export Gas Compressor) as provided. These are companion documents for different equipment, NOT a revision pair. Expected engine behaviour: surface a low-alignment-rate warning instead of reporting hundreds of spurious adds/removes. Eval treats this pair as pass/fail on that warning, not on delta P/R."
+}

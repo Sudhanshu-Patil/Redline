@@ -1,0 +1,18 @@
+{
+  "pair_id": "pair4",
+  "description": "Negative control: two different compressors' P&IDs presented as if they were a revision pair.",
+  "doc_a": {
+    "path": "data/samples/originals/lift_gas_compressor_26-KA-901.pdf",
+    "pid": "pair4_A",
+    "format": "pdf_native",
+    "revision_label": "26-KA-901 as-provided"
+  },
+  "doc_b": {
+    "path": "data/samples/originals/export_gas_compressor_26-KA-902.pdf",
+    "pid": "pair4_B",
+    "format": "pdf_native",
+    "revision_label": "26-KA-902 as-provided"
+  },
+  "ground_truth_path": "data/samples/pair4/ground_truth.json",
+  "created_by": "scripts/synthesize_pairs.py"
+}

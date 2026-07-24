@@ -1,0 +1,18 @@
+{
+  "pair_id": "pair1",
+  "description": "Primary synthetic pair: Lift Gas Compressor P&ID vs MOC-style edits (2x PSV set pressure, PIT HH limit, flow rate, note removed, note added).",
+  "doc_a": {
+    "path": "data/samples/originals/lift_gas_compressor_26-KA-901.pdf",
+    "pid": "pair1_A",
+    "format": "pdf_native",
+    "revision_label": "as-provided"
+  },
+  "doc_b": {
+    "path": "data/samples/pair1/B.pdf",
+    "pid": "pair1_B",
+    "format": "pdf_native",
+    "revision_label": "synthetic rev B"
+  },
+  "ground_truth_path": "data/samples/pair1/ground_truth.json",
+  "created_by": "scripts/synthesize_pairs.py"
+}

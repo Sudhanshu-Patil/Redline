@@ -1,0 +1,18 @@
+{
+  "pair_id": "pair2",
+  "description": "Scanned-format pair: native A vs rasterized (image-only) B of Pair 1.",
+  "doc_a": {
+    "path": "data/samples/originals/lift_gas_compressor_26-KA-901.pdf",
+    "pid": "pair2_A",
+    "format": "pdf_native",
+    "revision_label": "as-provided"
+  },
+  "doc_b": {
+    "path": "data/samples/pair2/B_scanned.pdf",
+    "pid": "pair2_B",
+    "format": "pdf_scanned",
+    "revision_label": "synthetic rev B (rasterized)"
+  },
+  "ground_truth_path": "data/samples/pair2/ground_truth.json",
+  "created_by": "scripts/synthesize_pairs.py"
+}
