@@ -160,7 +160,8 @@ class DwgAdapter(IngestAdapter):
                     drafts.append(_Draft(el_type, text, bbox, attrs))
 
                 elif etype == "MTEXT":
-                    text = cast(MText, entity).plain_text().strip()
+                    plain = cast(MText, entity).plain_text(split=False)
+                    text = cast(str, plain).strip()
                     if not text:
                         continue
                     lines = [(ln, bbox) for ln in text.splitlines() if ln.strip()]
