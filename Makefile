@@ -17,7 +17,7 @@ check: lint typecheck test
 # --- Filled in as later phases land ---
 
 run:
-	@echo "TODO: wire up in Phase 1 (ingest a document -> canonical JSON)"
+	uv run python -m src.ingest.pdf_native "data/samples/originals/lift_gas_compressor_26-KA-901.pdf" lift_gas_A
 
 chat:
 	@echo "TODO: wire up in Phase 8 (grounded chat CLI)"
