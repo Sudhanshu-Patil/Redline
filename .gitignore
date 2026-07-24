@@ -30,6 +30,9 @@ chroma_db/
 .cache/
 models_cache/
 
+# Claude Code harness-internal state
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db

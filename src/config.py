@@ -48,10 +48,29 @@ class Settings(BaseSettings):
     retrieval_top_k: int = 20
     rerank_top_k: int = 5
 
-    # Delta alignment thresholds
-    alignment_exact_match_confidence: float = 0.95
+    # Delta alignment thresholds. Calibrated against real Pair 1 edits (see
+    # src/delta/align.py docstring): a same-slot value edit like "19057"->
+    # "20500" scores only ~0.10 embedding similarity -- BELOW an unrelated
+    # nearby element's ~0.25 -- so tight bbox proximity is treated as
+    # decisive on its own, not merely a tiebreaker.
     alignment_embedding_similarity_threshold: float = 0.75
-    alignment_bbox_proximity_tolerance: float = 0.02  # fraction of page dimension
+    alignment_bbox_proximity_tolerance: float = 0.02  # "tight": position alone is decisive
+    alignment_tier3_loose_proximity: float = 0.15  # "loose": needs embedding similarity too
+    alignment_min_embed_text_len: int = 2  # shorter text skips embedding, never matches in tier 3
+    # Named block references (has a block_name) can move further and still be
+    # "the same instance". Bare primitives (LINE/CIRCLE/... with no name) have
+    # no identity beyond position, so they get a much tighter radius -- see
+    # src/delta/align.py::geometry_match for the real case this fixes.
+    geometry_match_max_bbox_distance: float = 0.3
+    geometry_match_unnamed_max_bbox_distance: float = 0.03
+    # Negative-control (Pair 4) detection threshold, against the exact-key
+    # match rate specifically -- not overall alignment_rate, which two
+    # unrelated documents sharing a P&ID template can inflate via
+    # coincidental tier-3 position matches. Measured on real samples: 0.99
+    # for a genuine revision pair, 0.24 for unrelated documents -- 0.5 sits
+    # with comfortable margin on both sides.
+    low_alignment_rate_threshold: float = 0.5
+    low_alignment_min_elements: int = 20  # below this many *keyed* elements, skip the warning
 
     # OCR
     ocr_confidence_threshold: float = 60.0  # tesseract confidence is 0-100

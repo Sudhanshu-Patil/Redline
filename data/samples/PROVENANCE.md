@@ -87,3 +87,34 @@ changes. Verified crops of every edited region were reviewed during synthesis.
 ## Pair 5 — stress set (pending Phase 12)
 
 Duplicated sheet set with scattered edits, for the scaling analysis.
+
+## Delta engine findings from real data (Phase 5)
+
+Three real bugs were found and fixed by running the engine against these pairs rather than
+only hand-built fixtures (see `src/delta/align.py` module docstring for full detail):
+
+1. **Tight-proximity ties.** Collapsing every within-tolerance candidate to an identical score
+   let an arbitrary id tie-break win over the genuinely closer match — `HH: 245` matched an
+   unrelated `LL: 120` (distance 0.017) instead of its true partner `HH: 250` (distance 0.003).
+   Fixed by ranking within the tight band by actual closeness instead of a flat score.
+2. **Template-coincidence noise (Pair 4).** Two unrelated documents sharing a P&ID template
+   coincidentally place *some* element near *some* other at nearly every position, which
+   tier 3 picked up regardless of content (`"NOTE 26"` ↔ `"N3601"` at score 0.99). Neither a
+   same-type gate nor a similarity floor fully separates this from genuine edits — some
+   coincidental pairs (`26GT9175` ↔ `26GT9134`) score *higher* similarity than real edits.
+   The negative-control warning was switched from the (inflatable) overall alignment rate to
+   the exact-key rate specifically, which isn't fooled by position: 0.99 on the genuine
+   revision vs. 0.24 on the negative control, a clean separation.
+3. **Unnamed geometry force-pairing (Pair 3).** A removed drain-stub `LINE` (no `block_name`,
+   so no identity beyond position) matched an unrelated added tie-in `LINE` at distance 0.16,
+   while the genuinely moved named block (`VALVE_GATE`) was only 0.09 away — too close a margin
+   for one threshold to separate. Named block references now get a generous move tolerance;
+   bare primitives get a much tighter one, since they have no identity beyond position to fall
+   back on.
+
+**Known, accepted limitation:** single-character instrument flags (`U`/`C`/`P`/`S`/`D`) and
+bare digit/letter grid cells fall below `ALIGNMENT_MIN_EMBED_TEXT_LEN` and are never matched
+across revisions — they show up as symmetric added/removed noise (119/119 on Pair 1) rather
+than risking a confident-looking wrong pairing on content with no real signal. This is a
+deliberate precision-over-recall tradeoff, not a bug; see `IMPLEMENTATION_PLAN.md` §14 and the
+Phase 13 failure table.
