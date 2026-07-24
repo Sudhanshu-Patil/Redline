@@ -221,6 +221,16 @@ def _boxes_intersect(
     return not (a[2] <= b[0] or b[2] <= a[0] or a[3] <= b[1] or b[3] <= a[1])
 
 
+def has_suspicious_chars(text: str) -> bool:
+    """True when OCR produced characters outside the drawing's plausible
+    alphabet (printable ASCII + degree sign) -- e.g. 'Γ90668)' where the PSV
+    bubble edge became Greek Gamma. Tesseract's per-word confidence can stay
+    high on such lines, so this is an independent trigger for the vision
+    fallback, not just a tiebreaker.
+    """
+    return any(not (" " <= ch <= "~" or ch == "°") for ch in text)
+
+
 class PdfScannedAdapter(IngestAdapter):
     format = "pdf_scanned"
 
@@ -358,7 +368,14 @@ class PdfScannedAdapter(IngestAdapter):
             e
             for e in elements
             if e.bbox.page == page_index
-            and e.extraction_confidence < threshold01
+            and (
+                e.extraction_confidence < threshold01
+                # A line's *mean* word confidence can stay high while one
+                # token is mangled into out-of-alphabet glyphs (observed:
+                # 'Γ90668) SP = 260 bar (g)' at 0.84), so suspicious
+                # characters qualify regardless of score.
+                or has_suspicious_chars(e.text)
+            )
             # Vector-art fragments OCR as short symbol runs ('�}', 'Tn *');
             # require some alphanumeric substance before spending an LLM call.
             and sum(ch.isalnum() for ch in e.text) >= 2
@@ -379,7 +396,11 @@ class PdfScannedAdapter(IngestAdapter):
                 e.attributes["ocr_fallback"] = "unavailable"
             return
 
-        candidates.sort(key=lambda e: e.extraction_confidence)
+        # Explicitly-mangled text (out-of-alphabet glyphs) outranks generic
+        # low-confidence noise; within each class, worst confidence first.
+        candidates.sort(
+            key=lambda e: (not has_suspicious_chars(e.text), e.extraction_confidence)
+        )
         selected = candidates[: settings.vision_fallback_max_regions]
         with tracing.span(
             "pdf_scanned.vision_fallback", page=page_index, regions=len(selected)

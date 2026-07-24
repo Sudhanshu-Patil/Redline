@@ -263,6 +263,33 @@ class TestVisionFallback:
         self._run([noise], vision)
         assert vision.calls == []
 
+    def test_suspicious_chars_qualify_despite_high_confidence(self):
+        """A high-confidence line containing out-of-alphabet glyphs (observed
+        live: Greek Gamma from a bubble edge) must still get a vision re-read
+        -- mean confidence masks one mangled token (the 9066B case)."""
+        vision = FakeVision(reply="PSV 9066B SP = 260 bar (g)")
+        masked = _element("Γ90668) SP = 260 bar (g)", conf=0.84)
+        self._run([masked], vision)
+        assert masked.attributes["ocr_fallback"] == "vision_llm"
+        assert "9066B" in masked.text
+
+    def test_suspicious_char_elements_outrank_low_conf_noise(self, monkeypatch):
+        monkeypatch.setattr(settings, "vision_fallback_max_regions", 1)
+        vision = FakeVision(reply="")
+        noise = _element("aAP", conf=0.0, seq=1)
+        mangled = _element("Γ90668) SP", conf=0.84, seq=2)
+        self._run([noise, mangled], vision)
+        assert len(vision.calls) == 1
+        assert "90668" in vision.calls[0]
+
+    def test_degree_sign_is_not_suspicious(self):
+        from src.ingest.pdf_scanned import has_suspicious_chars
+
+        assert has_suspicious_chars("25°C HEAT TRACING") is False
+        assert has_suspicious_chars('SP = 260 bar (g) 4"x6" #300') is False
+        assert has_suspicious_chars("Γ90668)") is True  # Greek Gamma
+        assert has_suspicious_chars("�text") is True  # true replacement char too
+
     def test_vision_call_failure_marks_element_and_continues(self):
         class ExplodingVision:
             @property

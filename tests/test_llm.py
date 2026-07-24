@@ -180,19 +180,67 @@ def oai_client(monkeypatch):
     return client, fake
 
 
-def test_oai_read_image_text_request_contract(oai_client):
+def test_oai_read_image_text_request_contract(oai_client, monkeypatch):
     """Locks the vision request shape for OpenAI-compatible providers:
-    vision model, data-URI image_url block first, prompt text second."""
+    vision model, data-URI image_url block first, prompt text second,
+    reasoning hidden via extra_body, headroom max_tokens."""
+    monkeypatch.setattr(settings, "llm_vision_reasoning_hidden", True)
     client, fake = oai_client
     result = client.read_image_text(b"png-bytes", context_hint="near PIT")
 
     assert result == "HH: 250"
     kwargs = fake.chat.completions.last_kwargs
     assert kwargs["model"] == settings.llm_vision_model
+    assert kwargs["max_tokens"] == settings.llm_vision_max_tokens
+    assert kwargs["extra_body"] == {"reasoning_format": "hidden"}
     content = kwargs["messages"][0]["content"]
     assert content[0]["type"] == "image_url"
     assert content[0]["image_url"]["url"].startswith("data:image/png;base64,")
     assert "near PIT" in content[1]["text"]
+
+
+def test_oai_read_image_omits_reasoning_param_when_disabled(oai_client, monkeypatch):
+    """Providers that reject Groq's reasoning_format must not receive it."""
+    monkeypatch.setattr(settings, "llm_vision_reasoning_hidden", False)
+    client, fake = oai_client
+    client.read_image_text(b"png-bytes")
+    assert "extra_body" not in fake.chat.completions.last_kwargs
+
+
+def test_think_tags_stripped_from_vision_reply(oai_client, monkeypatch):
+    """A reasoning model that leaks <think> blocks must still yield clean text."""
+    from src.chat.llm import strip_think_tags
+
+    assert strip_think_tags("<think>hmm\nlines</think>\nPSV 9066B") == "PSV 9066B"
+    assert strip_think_tags("no tags here") == "no tags here"
+    # Orphan closing tag (observed live: hidden-reasoning truncation leak)
+    assert strip_think_tags("leaked reasoning</think>\nHH: 250") == "HH: 250"
+
+    monkeypatch.setattr(
+        _FakeOaiMessage, "content", "<think>analysis...</think>\n  PIT-9062  "
+    )
+    client, _ = oai_client
+    assert client.read_image_text(b"png-bytes") == "PIT-9062"
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        ("<empty>", ""),
+        ("(empty)", ""),
+        ("EMPTY", ""),
+        ("no text", ""),
+        ("No text visible", ""),
+        ("N/A", ""),
+        ("none", ""),
+        ("PSV 9066B", "PSV 9066B"),  # real answers untouched
+        ("NONE SHALL PASS", "NONE SHALL PASS"),  # 'none' only as whole reply
+    ],
+)
+def test_empty_reply_normalization(reply, expected):
+    from src.chat.llm import normalize_empty_reply
+
+    assert normalize_empty_reply(reply) == expected
 
 
 def test_oai_complete_request_contract(oai_client):

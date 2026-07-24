@@ -22,7 +22,15 @@ class Settings(BaseSettings):
     llm_base_url: str = "https://api.groq.com/openai/v1"
     llm_api_key: str = ""
     llm_model: str = "llama-3.3-70b-versatile"
-    llm_vision_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
+    llm_vision_model: str = "qwen/qwen3.6-27b"
+    # Reasoning models spend hidden tokens before answering; vision reads need
+    # headroom well beyond the answer length (observed: hard P&ID crops
+    # exceed 1500 thinking tokens and truncate).
+    llm_vision_max_tokens: int = 3000
+    # Send Groq's reasoning_format=hidden to suppress <think> output. Set
+    # false for providers that reject the parameter (think-tags are stripped
+    # from replies regardless).
+    llm_vision_reasoning_hidden: bool = True
 
     # -- shared --
     llm_max_retries: int = 3

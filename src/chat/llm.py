@@ -16,6 +16,7 @@ low-confidence tesseract text rather than failing the ingest).
 """
 
 import base64
+import re
 
 import anthropic
 import openai
@@ -25,6 +26,27 @@ from src.observability import tracing
 from src.observability.logging import get_logger
 
 log = get_logger(__name__)
+
+_THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+_EMPTY_REPLY_RE = re.compile(r"^\W*(empty|no text( visible| found)?|n/?a|none)\W*$", re.IGNORECASE)
+
+
+def strip_think_tags(text: str) -> str:
+    """Remove <think>...</think> blocks emitted by reasoning models whose
+    provider doesn't (or can't be told to) hide them. Also handles the
+    observed leak where only an orphan closing tag survives hidden-reasoning
+    truncation: everything up to the last </think> is reasoning, not answer.
+    """
+    cleaned = _THINK_TAG_RE.sub("", text)
+    if "</think>" in cleaned:
+        cleaned = cleaned.rsplit("</think>", 1)[1]
+    return cleaned.strip()
+
+
+def normalize_empty_reply(text: str) -> str:
+    """Models answer 'empty'/'no text'/'N/A' in words when asked to return
+    nothing; canonicalize those to an actual empty string."""
+    return "" if _EMPTY_REPLY_RE.match(text) else text
 
 _VISION_PROMPT = (
     "This is a small crop from a scanned engineering drawing (P&ID). "
@@ -127,9 +149,10 @@ class LLMClient:
             sp["cost_usd"] = estimate_cost_usd(
                 response.usage.input_tokens, response.usage.output_tokens
             )
-            return "".join(
+            reply = "".join(
                 block.text for block in response.content if block.type == "text"
             ).strip()
+            return normalize_empty_reply(reply)
 
     # --- openai_compatible backend (Groq, Moonshot/Kimi, OpenRouter, ...) ---
 
@@ -178,9 +201,12 @@ class LLMClient:
         ) as sp:
             image_data = base64.standard_b64encode(png_bytes).decode("utf-8")
             prompt = _VISION_PROMPT + (f" Context: {context_hint}" if context_hint else "")
+            kwargs: dict = {}
+            if settings.llm_vision_reasoning_hidden:
+                kwargs["extra_body"] = {"reasoning_format": "hidden"}
             response = client.chat.completions.create(
                 model=settings.llm_vision_model,
-                max_tokens=200,
+                max_tokens=settings.llm_vision_max_tokens,
                 messages=[
                     {
                         "role": "user",
@@ -195,12 +221,14 @@ class LLMClient:
                         ],
                     }
                 ],
+                **kwargs,
             )
             usage = response.usage
             sp["input_tokens"] = usage.prompt_tokens if usage else 0
             sp["output_tokens"] = usage.completion_tokens if usage else 0
             sp["cost_usd"] = estimate_cost_usd(sp["input_tokens"], sp["output_tokens"])
-            return (response.choices[0].message.content or "").strip()
+            reply = strip_think_tags(response.choices[0].message.content or "")
+            return normalize_empty_reply(reply)
 
     # --- public interface ---
 
