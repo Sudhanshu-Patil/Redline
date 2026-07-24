@@ -1,4 +1,8 @@
-"""LLMClient tests that must never touch the network."""
+"""LLMClient tests that must never touch the network.
+
+Every test pins settings.llm_provider explicitly so results don't depend on
+whatever a local .env selects.
+"""
 
 import pytest
 
@@ -19,26 +23,43 @@ class TestEstimateCost:
         assert estimate_cost_usd(0, 0) == 0.0
 
 
-class TestUnconfiguredClient:
+class TestUnconfigured:
     @pytest.fixture(autouse=True)
-    def no_key(self, monkeypatch):
+    def no_keys(self, monkeypatch):
         monkeypatch.setattr(settings, "anthropic_api_key", "")
+        monkeypatch.setattr(settings, "llm_api_key", "")
 
-    def test_is_configured_false_without_key(self):
+    @pytest.mark.parametrize("provider", ["anthropic", "openai_compatible"])
+    def test_is_configured_false_without_key(self, monkeypatch, provider):
+        monkeypatch.setattr(settings, "llm_provider", provider)
         assert LLMClient().is_configured is False
 
-    def test_complete_raises_without_key(self):
+    @pytest.mark.parametrize("provider", ["anthropic", "openai_compatible"])
+    def test_complete_raises_without_key(self, monkeypatch, provider):
+        monkeypatch.setattr(settings, "llm_provider", provider)
         with pytest.raises(LLMNotConfiguredError):
             LLMClient().complete(system="s", user="u")
 
-    def test_read_image_text_raises_without_key(self):
+    @pytest.mark.parametrize("provider", ["anthropic", "openai_compatible"])
+    def test_read_image_text_raises_without_key(self, monkeypatch, provider):
+        monkeypatch.setattr(settings, "llm_provider", provider)
         with pytest.raises(LLMNotConfiguredError):
             LLMClient().read_image_text(b"not-a-png")
 
 
-def test_is_configured_true_with_key(monkeypatch):
-    monkeypatch.setattr(settings, "anthropic_api_key", "sk-test-not-real")
+@pytest.mark.parametrize(
+    ("provider", "key_field"),
+    [("anthropic", "anthropic_api_key"), ("openai_compatible", "llm_api_key")],
+)
+def test_is_configured_true_with_key(monkeypatch, provider, key_field):
+    monkeypatch.setattr(settings, "llm_provider", provider)
+    monkeypatch.setattr(settings, "anthropic_api_key", "")
+    monkeypatch.setattr(settings, "llm_api_key", "")
+    monkeypatch.setattr(settings, key_field, "sk-test-not-real")
     assert LLMClient().is_configured is True
+
+
+# --- anthropic backend contract ---
 
 
 class _FakeUsage:
@@ -71,17 +92,20 @@ class _FakeAnthropicClient:
         self.messages = _FakeMessages()
 
 
-def test_read_image_text_request_contract(monkeypatch):
-    """Locks the vision request shape: configured model, thinking disabled,
-    base64 PNG image block first, prompt text second -- and that token usage
-    lands in the emitted span."""
-
-
+@pytest.fixture
+def anthropic_client(monkeypatch):
+    monkeypatch.setattr(settings, "llm_provider", "anthropic")
     monkeypatch.setattr(settings, "anthropic_api_key", "sk-test-not-real")
     client = LLMClient()
     fake = _FakeAnthropicClient()
     client._client = fake
+    return client, fake
 
+
+def test_anthropic_read_image_text_request_contract(anthropic_client):
+    """Locks the vision request shape: configured model, thinking disabled,
+    base64 PNG image block first, prompt text second."""
+    client, fake = anthropic_client
     result = client.read_image_text(b"png-bytes", context_hint="near PSV")
 
     assert result == "PSV 9066B"
@@ -94,16 +118,89 @@ def test_read_image_text_request_contract(monkeypatch):
     assert "near PSV" in content[1]["text"]
 
 
-def test_complete_request_contract(monkeypatch):
-    monkeypatch.setattr(settings, "anthropic_api_key", "sk-test-not-real")
-    client = LLMClient()
-    fake = _FakeAnthropicClient()
-    client._client = fake
-
+def test_anthropic_complete_request_contract(anthropic_client):
+    client, fake = anthropic_client
     result = client.complete(system="be brief", user="hello", max_tokens=64)
 
     assert result == "PSV 9066B"
     kwargs = fake.messages.last_kwargs
     assert kwargs["model"] == settings.anthropic_model
     assert kwargs["system"] == "be brief"
+    assert kwargs["max_tokens"] == 64
+
+
+# --- openai_compatible backend contract (Groq / Moonshot / Kimi ...) ---
+
+
+class _FakeOaiUsage:
+    prompt_tokens = 900
+    completion_tokens = 15
+
+
+class _FakeOaiMessage:
+    content = "  HH: 250  "
+
+
+class _FakeOaiChoice:
+    message = _FakeOaiMessage()
+    finish_reason = "stop"
+
+
+class _FakeOaiResponse:
+    usage = _FakeOaiUsage()
+    choices = [_FakeOaiChoice()]
+
+
+class _FakeCompletions:
+    def __init__(self):
+        self.last_kwargs = None
+
+    def create(self, **kwargs):
+        self.last_kwargs = kwargs
+        return _FakeOaiResponse()
+
+
+class _FakeOaiChat:
+    def __init__(self):
+        self.completions = _FakeCompletions()
+
+
+class _FakeOaiClient:
+    def __init__(self):
+        self.chat = _FakeOaiChat()
+
+
+@pytest.fixture
+def oai_client(monkeypatch):
+    monkeypatch.setattr(settings, "llm_provider", "openai_compatible")
+    monkeypatch.setattr(settings, "llm_api_key", "gsk-test-not-real")
+    client = LLMClient()
+    fake = _FakeOaiClient()
+    client._oai_client = fake
+    return client, fake
+
+
+def test_oai_read_image_text_request_contract(oai_client):
+    """Locks the vision request shape for OpenAI-compatible providers:
+    vision model, data-URI image_url block first, prompt text second."""
+    client, fake = oai_client
+    result = client.read_image_text(b"png-bytes", context_hint="near PIT")
+
+    assert result == "HH: 250"
+    kwargs = fake.chat.completions.last_kwargs
+    assert kwargs["model"] == settings.llm_vision_model
+    content = kwargs["messages"][0]["content"]
+    assert content[0]["type"] == "image_url"
+    assert content[0]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert "near PIT" in content[1]["text"]
+
+
+def test_oai_complete_request_contract(oai_client):
+    client, fake = oai_client
+    result = client.complete(system="be brief", user="hello", max_tokens=64)
+
+    assert result == "HH: 250"
+    kwargs = fake.chat.completions.last_kwargs
+    assert kwargs["model"] == settings.llm_model
+    assert kwargs["messages"][0] == {"role": "system", "content": "be brief"}
     assert kwargs["max_tokens"] == 64

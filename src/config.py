@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -6,13 +7,27 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # LLM
+    # LLM provider selection. "anthropic" uses the anthropic SDK with
+    # ANTHROPIC_* settings; "openai_compatible" works with any provider that
+    # speaks the OpenAI chat-completions format (Groq, Moonshot/Kimi,
+    # OpenRouter, ...) via LLM_BASE_URL/LLM_API_KEY/LLM_MODEL.
+    llm_provider: Literal["anthropic", "openai_compatible"] = "anthropic"
+
+    # -- anthropic backend --
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-5"
     anthropic_vision_model: str = "claude-sonnet-5"
+
+    # -- openai_compatible backend --
+    llm_base_url: str = "https://api.groq.com/openai/v1"
+    llm_api_key: str = ""
+    llm_model: str = "llama-3.3-70b-versatile"
+    llm_vision_model: str = "meta-llama/llama-4-scout-17b-16e-instruct"
+
+    # -- shared --
     llm_max_retries: int = 3
     llm_timeout_seconds: float = 60.0
-    # Sticker $/MTok for the configured model (Sonnet 5); used for cost telemetry.
+    # $/MTok for cost telemetry (defaults = Sonnet 5 sticker; set 0 for free tiers).
     llm_cost_per_mtok_input: float = 3.0
     llm_cost_per_mtok_output: float = 15.0
 

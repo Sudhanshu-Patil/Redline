@@ -1,25 +1,37 @@
-"""LLMClient: the single place the anthropic SDK is touched (plan §2).
+"""LLMClient: the single place any LLM SDK is touched (plan §2).
 
-Everything downstream (OCR vision fallback now, chat/change-descriptions in
-later phases) depends on this interface, so swapping providers or models is a
-one-file change. Every call emits a telemetry span with token counts and an
+Two interchangeable backends behind one interface, selected by LLM_PROVIDER:
+
+- "anthropic": Claude via the anthropic SDK (the plan's original choice).
+- "openai_compatible": any provider speaking the OpenAI chat-completions
+  format -- Groq's free tier, Moonshot/Kimi, OpenRouter, a local server --
+  configured entirely by LLM_BASE_URL / LLM_API_KEY / LLM_MODEL /
+  LLM_VISION_MODEL. No code change to swap providers.
+
+Every call emits a telemetry span with provider, model, token counts and an
 estimated cost so Phase 7's /metrics can aggregate spend without a separate
-bookkeeping store.
-
-No API key is required at import time: `LLMClient.is_configured` reports
-availability, callers are expected to degrade gracefully (the OCR adapter
-keeps low-confidence tesseract text rather than failing the ingest).
+bookkeeping store. No API key is required at import time: `is_configured`
+reports availability and callers degrade gracefully (the OCR adapter keeps
+low-confidence tesseract text rather than failing the ingest).
 """
 
 import base64
 
 import anthropic
+import openai
 
 from src.config import settings
 from src.observability import tracing
 from src.observability.logging import get_logger
 
 log = get_logger(__name__)
+
+_VISION_PROMPT = (
+    "This is a small crop from a scanned engineering drawing (P&ID). "
+    "Transcribe the text in this image exactly as it appears. Return ONLY "
+    "the verbatim text, no commentary. If you cannot read any text, "
+    "return an empty response."
+)
 
 
 class LLMNotConfiguredError(RuntimeError):
@@ -36,13 +48,18 @@ def estimate_cost_usd(input_tokens: int, output_tokens: int) -> float:
 class LLMClient:
     def __init__(self) -> None:
         self._client: anthropic.Anthropic | None = None
+        self._oai_client: openai.OpenAI | None = None
 
     @property
     def is_configured(self) -> bool:
-        return bool(settings.anthropic_api_key)
+        if settings.llm_provider == "anthropic":
+            return bool(settings.anthropic_api_key)
+        return bool(settings.llm_api_key)
+
+    # --- anthropic backend ---
 
     def _get_client(self) -> anthropic.Anthropic:
-        if not self.is_configured:
+        if not settings.anthropic_api_key:
             raise LLMNotConfiguredError(
                 "ANTHROPIC_API_KEY is not set; LLM-dependent features are unavailable"
             )
@@ -54,10 +71,11 @@ class LLMClient:
             )
         return self._client
 
-    def complete(self, system: str, user: str, max_tokens: int = 1024) -> str:
-        """Plain text completion (used by chat/report phases)."""
+    def _anthropic_complete(self, system: str, user: str, max_tokens: int) -> str:
         client = self._get_client()
-        with tracing.span("llm.complete", model=settings.anthropic_model) as sp:
+        with tracing.span(
+            "llm.complete", provider="anthropic", model=settings.anthropic_model
+        ) as sp:
             response = client.messages.create(
                 model=settings.anthropic_model,
                 max_tokens=max_tokens,
@@ -74,27 +92,15 @@ class LLMClient:
                 block.text for block in response.content if block.type == "text"
             ).strip()
 
-    def read_image_text(self, png_bytes: bytes, context_hint: str = "") -> str:
-        """Vision re-read of a small image crop; returns the verbatim text seen.
-
-        Used by the scanned-PDF adapter for regions where tesseract's
-        confidence fell below threshold (plan §2's "smarter than raw diff"
-        judgment call). Thinking is explicitly disabled -- these are tiny
-        verbatim transcription reads where reasoning adds latency, not value.
-        """
+    def _anthropic_read_image(self, png_bytes: bytes, context_hint: str) -> str:
         client = self._get_client()
         with tracing.span(
-            "llm.read_image_text", model=settings.anthropic_vision_model
+            "llm.read_image_text",
+            provider="anthropic",
+            model=settings.anthropic_vision_model,
         ) as sp:
             image_data = base64.standard_b64encode(png_bytes).decode("utf-8")
-            prompt = (
-                "This is a small crop from a scanned engineering drawing (P&ID). "
-                "Transcribe the text in this image exactly as it appears. Return ONLY "
-                "the verbatim text, no commentary. If you cannot read any text, "
-                "return an empty response."
-            )
-            if context_hint:
-                prompt += f" Context: {context_hint}"
+            prompt = _VISION_PROMPT + (f" Context: {context_hint}" if context_hint else "")
             response = client.messages.create(
                 model=settings.anthropic_vision_model,
                 max_tokens=200,
@@ -124,3 +130,92 @@ class LLMClient:
             return "".join(
                 block.text for block in response.content if block.type == "text"
             ).strip()
+
+    # --- openai_compatible backend (Groq, Moonshot/Kimi, OpenRouter, ...) ---
+
+    def _get_oai_client(self) -> openai.OpenAI:
+        if not settings.llm_api_key:
+            raise LLMNotConfiguredError(
+                "LLM_API_KEY is not set; LLM-dependent features are unavailable"
+            )
+        if self._oai_client is None:
+            self._oai_client = openai.OpenAI(
+                base_url=settings.llm_base_url,
+                api_key=settings.llm_api_key,
+                max_retries=settings.llm_max_retries,
+                timeout=settings.llm_timeout_seconds,
+            )
+        return self._oai_client
+
+    def _oai_complete(self, system: str, user: str, max_tokens: int) -> str:
+        client = self._get_oai_client()
+        with tracing.span(
+            "llm.complete", provider="openai_compatible", model=settings.llm_model
+        ) as sp:
+            response = client.chat.completions.create(
+                model=settings.llm_model,
+                max_tokens=max_tokens,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+            )
+            usage = response.usage
+            sp["input_tokens"] = usage.prompt_tokens if usage else 0
+            sp["output_tokens"] = usage.completion_tokens if usage else 0
+            sp["cost_usd"] = estimate_cost_usd(
+                sp["input_tokens"], sp["output_tokens"]
+            )
+            sp["stop_reason"] = response.choices[0].finish_reason
+            return (response.choices[0].message.content or "").strip()
+
+    def _oai_read_image(self, png_bytes: bytes, context_hint: str) -> str:
+        client = self._get_oai_client()
+        with tracing.span(
+            "llm.read_image_text",
+            provider="openai_compatible",
+            model=settings.llm_vision_model,
+        ) as sp:
+            image_data = base64.standard_b64encode(png_bytes).decode("utf-8")
+            prompt = _VISION_PROMPT + (f" Context: {context_hint}" if context_hint else "")
+            response = client.chat.completions.create(
+                model=settings.llm_vision_model,
+                max_tokens=200,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{image_data}"
+                                },
+                            },
+                            {"type": "text", "text": prompt},
+                        ],
+                    }
+                ],
+            )
+            usage = response.usage
+            sp["input_tokens"] = usage.prompt_tokens if usage else 0
+            sp["output_tokens"] = usage.completion_tokens if usage else 0
+            sp["cost_usd"] = estimate_cost_usd(sp["input_tokens"], sp["output_tokens"])
+            return (response.choices[0].message.content or "").strip()
+
+    # --- public interface ---
+
+    def complete(self, system: str, user: str, max_tokens: int = 1024) -> str:
+        """Plain text completion (used by chat/report phases)."""
+        if settings.llm_provider == "anthropic":
+            return self._anthropic_complete(system, user, max_tokens)
+        return self._oai_complete(system, user, max_tokens)
+
+    def read_image_text(self, png_bytes: bytes, context_hint: str = "") -> str:
+        """Vision re-read of a small image crop; returns the verbatim text seen.
+
+        Used by the scanned-PDF adapter for regions where tesseract's
+        confidence fell below threshold.
+        """
+        if settings.llm_provider == "anthropic":
+            return self._anthropic_read_image(png_bytes, context_hint)
+        return self._oai_read_image(png_bytes, context_hint)
