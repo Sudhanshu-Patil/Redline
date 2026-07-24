@@ -32,7 +32,7 @@ eval-diff:
 	@echo "TODO: wire up in Phase 10 (compare two scorecard.json runs)"
 
 metrics:
-	@echo "TODO: wire up in Phase 7 (serve /metrics)"
+	uv run python -m src.observability.metrics_server
 
 dashboard:
 	@echo "TODO: wire up in Phase 11 (uvicorn src.dashboard.app:app)"

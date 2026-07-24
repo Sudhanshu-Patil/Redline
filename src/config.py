@@ -96,6 +96,8 @@ class Settings(BaseSettings):
 
     # Observability
     log_level: str = "INFO"
+    metrics_host: str = "127.0.0.1"
+    metrics_port: int = 8000
 
 
 settings = Settings()

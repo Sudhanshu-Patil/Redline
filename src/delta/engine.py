@@ -200,7 +200,12 @@ def compute_delta(
             exact_key_rate=round(exact_key_rate, 4),
         )
         sp["deltas"] = len(deltas)
+        sp["added"] = stats.added
+        sp["removed"] = stats.removed
+        sp["modified"] = stats.modified
+        sp["unchanged"] = stats.unchanged
         sp["alignment_rate"] = stats.alignment_rate
+        sp["exact_key_rate"] = stats.exact_key_rate
         log.info(
             "delta computed",
             extra={
