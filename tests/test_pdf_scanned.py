@@ -3,7 +3,7 @@ the vision-fallback policy. No tesseract binary or network required."""
 
 import pytest
 
-from src.canonical.model import BBox, Element
+from src.canonical.model import Element
 from src.config import settings
 from src.ingest.pdf_scanned import (
     OcrLine,
@@ -13,6 +13,7 @@ from src.ingest.pdf_scanned import (
     group_tsv_into_lines,
     resolve_tesseract_cmd,
 )
+from tests.conftest import make_element
 
 
 class TestResolveTesseractCmd:
@@ -83,7 +84,7 @@ class TestClusterLinesSpatially:
         far_away = line("VENDOR", 800, 100, 900, 123, block=3, key=(3, 1, 1))
         groups = cluster_lines_spatially([far_away, loop, pit])
         texts = [[ln.text for ln in g] for g in groups]
-        assert [["PIT", "9062"], ["VENDOR"]] == texts
+        assert texts == [["PIT", "9062"], ["VENDOR"]]
 
     def test_horizontally_disjoint_stacks_stay_separate(self):
         a1 = line("HH: 250", 200, 100, 260, 123)
@@ -91,7 +92,7 @@ class TestClusterLinesSpatially:
         a2 = line("RS", 205, 128, 225, 151)
         groups = cluster_lines_spatially([a1, b1, a2])
         texts = sorted([sorted(ln.text for ln in g) for g in groups])
-        assert [["HH: 250", "RS"], ["LL: 120"]] == texts
+        assert texts == [["HH: 250", "RS"], ["LL: 120"]]
 
     def test_large_vertical_gap_breaks_cluster(self):
         top = line("NOTES:", 100, 100, 160, 123)
@@ -174,16 +175,7 @@ class TestGroupTsvIntoLines:
 
 
 def _element(text: str, conf: float, seq: int = 0) -> Element:
-    return Element(
-        id=f"t:pdf_scanned:{seq:05d}",
-        type="text_block",
-        text=text,
-        bbox=BBox(
-            page=0, x0=100, y0=100, x1=200, y1=120, page_width=1191, page_height=842
-        ),
-        source_adapter="pdf_scanned",
-        extraction_confidence=conf,
-    )
+    return make_element(text, conf=conf, seq=seq, source_adapter="pdf_scanned")
 
 
 class FakeVision:

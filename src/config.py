@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # -- shared --
     llm_max_retries: int = 3
     llm_timeout_seconds: float = 60.0
+    # Free tiers rate-limit aggressively with a stated wait; honor it up to
+    # this many seconds per call before giving up (0 disables waiting).
+    llm_rate_limit_max_wait_seconds: float = 120.0
     # $/MTok for cost telemetry (defaults = Sonnet 5 sticker; set 0 for free tiers).
     llm_cost_per_mtok_input: float = 3.0
     llm_cost_per_mtok_output: float = 15.0

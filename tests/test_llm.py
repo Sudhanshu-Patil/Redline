@@ -243,6 +243,86 @@ def test_empty_reply_normalization(reply, expected):
     assert normalize_empty_reply(reply) == expected
 
 
+class TestRateLimitWait:
+    @pytest.mark.parametrize(
+        ("message", "expected"),
+        [
+            ("Rate limit reached ... Please try again in 7.66s. ...", 7.66),
+            ("Please try again in 250ms.", 0.25),
+            ("Please try again in 2m.", 120.0),
+            ("no wait hint here", None),
+        ],
+    )
+    def test_parse_suggested_wait(self, message, expected):
+        from src.chat.llm import parse_suggested_wait
+
+        assert parse_suggested_wait(message) == expected
+
+    def test_retries_after_stated_wait_then_succeeds(self, monkeypatch):
+        import openai as openai_mod
+
+        from src.chat import llm as llm_mod
+
+        sleeps: list[float] = []
+        monkeypatch.setattr(llm_mod.time, "sleep", lambda s: sleeps.append(s))
+        monkeypatch.setattr(settings, "llm_rate_limit_max_wait_seconds", 120.0)
+
+        attempts = {"n": 0}
+
+        def flaky():
+            attempts["n"] += 1
+            if attempts["n"] < 3:
+                raise openai_mod.RateLimitError(
+                    "Please try again in 5s.", response=_fake_httpx_response(), body=None
+                )
+            return "done"
+
+        assert llm_mod._with_rate_limit_wait(flaky) == "done"
+        assert attempts["n"] == 3
+        assert sleeps == [6.0, 6.0]  # stated 5s + 1s margin, twice
+
+    def test_gives_up_when_budget_exhausted(self, monkeypatch):
+        import openai as openai_mod
+
+        from src.chat import llm as llm_mod
+
+        monkeypatch.setattr(llm_mod.time, "sleep", lambda s: None)
+        monkeypatch.setattr(settings, "llm_rate_limit_max_wait_seconds", 10.0)
+
+        def always_limited():
+            raise openai_mod.RateLimitError(
+                "Please try again in 8s.", response=_fake_httpx_response(), body=None
+            )
+
+        with pytest.raises(openai_mod.RateLimitError):
+            llm_mod._with_rate_limit_wait(always_limited)
+
+    def test_disabled_budget_raises_immediately(self, monkeypatch):
+        import openai as openai_mod
+
+        from src.chat import llm as llm_mod
+
+        called = {"sleep": False}
+        monkeypatch.setattr(llm_mod.time, "sleep", lambda s: called.update(sleep=True))
+        monkeypatch.setattr(settings, "llm_rate_limit_max_wait_seconds", 0.0)
+
+        def limited():
+            raise openai_mod.RateLimitError(
+                "Please try again in 5s.", response=_fake_httpx_response(), body=None
+            )
+
+        with pytest.raises(openai_mod.RateLimitError):
+            llm_mod._with_rate_limit_wait(limited)
+        assert called["sleep"] is False
+
+
+def _fake_httpx_response():
+    import httpx
+
+    request = httpx.Request("POST", "https://example.test/v1/chat/completions")
+    return httpx.Response(429, request=request)
+
+
 def test_oai_complete_request_contract(oai_client):
     client, fake = oai_client
     result = client.complete(system="be brief", user="hello", max_tokens=64)

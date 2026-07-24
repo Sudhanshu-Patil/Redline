@@ -1,0 +1,10 @@
+# Normalize to LF in the repo; Git only converts to CRLF on checkout if the
+# platform's core.autocrlf asks for it. Keeps diffs clean across contributors
+# on Windows/Mac/Linux and stops every commit from warning about line endings.
+* text=auto eol=lf
+
+*.pdf -text binary
+*.dxf -text binary
+*.dwg -text binary
+*.png -text binary
+*.jpg -text binary

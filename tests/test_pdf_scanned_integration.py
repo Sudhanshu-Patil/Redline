@@ -11,6 +11,7 @@ import pytest
 
 from src.canonical.model import CanonicalDocument
 from src.ingest.pdf_scanned import PdfScannedAdapter, tesseract_available
+from tests.conftest import NoVisionClient
 
 SCANNED = Path("data/samples/pair2/B_scanned.pdf")
 
@@ -20,18 +21,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-class NoVision:
-    @property
-    def is_configured(self) -> bool:
-        return False
-
-    def read_image_text(self, png_bytes: bytes, context_hint: str = "") -> str:
-        raise AssertionError("must not be called")
-
-
 @pytest.fixture(scope="module")
 def doc() -> CanonicalDocument:
-    return PdfScannedAdapter(vision_client=NoVision()).ingest(SCANNED, pid="pair2_B_test")
+    return PdfScannedAdapter(vision_client=NoVisionClient()).ingest(SCANNED, pid="pair2_B_test")
 
 
 def test_extracts_a_substantial_number_of_elements(doc):
@@ -89,7 +81,7 @@ def test_ingest_emits_trace_spans(tmp_path, monkeypatch):
 
     monkeypatch.setattr(tracing.settings, "traces_dir", tmp_path)
     with tracing.trace("test_scanned_ingest") as trace_id:
-        PdfScannedAdapter(vision_client=NoVision()).ingest(SCANNED, pid="span_check")
+        PdfScannedAdapter(vision_client=NoVisionClient()).ingest(SCANNED, pid="span_check")
     records = [
         json.loads(line)
         for line in (tmp_path / f"{trace_id}.jsonl").read_text().splitlines()

@@ -1,15 +1,8 @@
 import pytest
 from pydantic import ValidationError
 
-from src.canonical.model import BBox, CanonicalDocument, Element, make_element_id
-
-
-def make_bbox(**overrides) -> BBox:
-    defaults = dict(
-        page=0, x0=10.0, y0=20.0, x1=110.0, y1=70.0, page_width=200.0, page_height=100.0
-    )
-    defaults.update(overrides)
-    return BBox(**defaults)
+from src.canonical.model import CanonicalDocument, Element, make_element_id
+from tests.conftest import make_bbox
 
 
 def test_bbox_normalized_is_page_relative_fraction():

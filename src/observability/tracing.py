@@ -10,6 +10,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
+from pathlib import Path
 from typing import Any
 
 from src.config import settings
@@ -46,7 +47,7 @@ class SpanRecord:
         return json.dumps(asdict(self), default=str)
 
 
-def _trace_file(trace_id: str):
+def _trace_file(trace_id: str) -> Path:
     settings.traces_dir.mkdir(parents=True, exist_ok=True)
     return settings.traces_dir / f"{trace_id}.jsonl"
 

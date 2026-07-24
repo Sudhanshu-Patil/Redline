@@ -17,6 +17,9 @@ low-confidence tesseract text rather than failing the ingest).
 
 import base64
 import re
+import time
+from collections.abc import Callable
+from typing import TypeVar
 
 import anthropic
 import openai
@@ -47,6 +50,43 @@ def normalize_empty_reply(text: str) -> str:
     """Models answer 'empty'/'no text'/'N/A' in words when asked to return
     nothing; canonicalize those to an actual empty string."""
     return "" if _EMPTY_REPLY_RE.match(text) else text
+
+
+_RETRY_AFTER_RE = re.compile(r"try again in ([\d.]+)\s*(ms|s|m)\b", re.IGNORECASE)
+
+T = TypeVar("T")
+
+
+def parse_suggested_wait(message: str) -> float | None:
+    """Extract the provider's suggested wait from a 429 body, in seconds.
+    Groq phrases it as 'Please try again in 7.66s' (also ms/m variants)."""
+    m = _RETRY_AFTER_RE.search(message)
+    if not m:
+        return None
+    value = float(m.group(1))
+    unit = m.group(2).lower()
+    return value / 1000 if unit == "ms" else value * 60 if unit == "m" else value
+
+
+def _with_rate_limit_wait(call: Callable[[], T]) -> T:
+    """Run `call`; on 429, honor the provider's stated wait (within budget)
+    and retry until the budget is exhausted. Free tiers burst-limit far
+    beyond what the SDK's built-in backoff tolerates."""
+    budget = settings.llm_rate_limit_max_wait_seconds
+    while True:
+        try:
+            return call()
+        except openai.RateLimitError as exc:
+            wait = parse_suggested_wait(str(exc)) or 15.0
+            wait = min(wait + 1.0, budget)  # +1s margin over the stated window
+            if budget <= 0 or wait <= 0:
+                raise
+            log.warning(
+                "rate limited; honoring provider wait",
+                extra={"extra_fields": {"wait_seconds": round(wait, 1)}},
+            )
+            time.sleep(wait)
+            budget -= wait
 
 _VISION_PROMPT = (
     "This is a small crop from a scanned engineering drawing (P&ID). "
@@ -175,13 +215,15 @@ class LLMClient:
         with tracing.span(
             "llm.complete", provider="openai_compatible", model=settings.llm_model
         ) as sp:
-            response = client.chat.completions.create(
-                model=settings.llm_model,
-                max_tokens=max_tokens,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
+            response = _with_rate_limit_wait(
+                lambda: client.chat.completions.create(
+                    model=settings.llm_model,
+                    max_tokens=max_tokens,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                )
             )
             usage = response.usage
             sp["input_tokens"] = usage.prompt_tokens if usage else 0
@@ -204,24 +246,26 @@ class LLMClient:
             kwargs: dict = {}
             if settings.llm_vision_reasoning_hidden:
                 kwargs["extra_body"] = {"reasoning_format": "hidden"}
-            response = client.chat.completions.create(
-                model=settings.llm_vision_model,
-                max_tokens=settings.llm_vision_max_tokens,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{image_data}"
+            response = _with_rate_limit_wait(
+                lambda: client.chat.completions.create(
+                    model=settings.llm_vision_model,
+                    max_tokens=settings.llm_vision_max_tokens,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": f"data:image/png;base64,{image_data}"
+                                    },
                                 },
-                            },
-                            {"type": "text", "text": prompt},
-                        ],
-                    }
-                ],
-                **kwargs,
+                                {"type": "text", "text": prompt},
+                            ],
+                        }
+                    ],
+                    **kwargs,
+                )
             )
             usage = response.usage
             sp["input_tokens"] = usage.prompt_tokens if usage else 0

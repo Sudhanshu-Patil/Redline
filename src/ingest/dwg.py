@@ -38,7 +38,7 @@ from typing import cast
 import ezdxf
 import ezdxf.bbox
 from ezdxf.document import Drawing
-from ezdxf.entities import Dimension, Insert, MText
+from ezdxf.entities import Dimension, DXFGraphic, Insert, MText
 
 from src.canonical.model import BBox, CanonicalDocument, Element, ElementType, make_element_id
 from src.config import settings
@@ -96,7 +96,7 @@ def convert_dwg_to_dxf(dwg_path: Path) -> Path:
         return produced
 
 
-def _entity_bbox(entity) -> tuple[float, float, float, float] | None:
+def _entity_bbox(entity: DXFGraphic) -> tuple[float, float, float, float] | None:
     box = ezdxf.bbox.extents([entity], fast=True)
     if not box.has_data:
         return None
