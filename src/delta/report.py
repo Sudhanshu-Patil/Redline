@@ -10,21 +10,18 @@ a reviewer sees one consistent color language across the report and the
 annotated drawing.
 """
 
+import base64
 from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
 
 from src.canonical.model import CanonicalDocument
 from src.config import settings
+from src.delta.colors import CHANGE_ORDER, STATUS_COLORS, STATUS_LABELS
 from src.delta.engine import Delta, DeltaReport
 from src.observability import tracing
+from src.observability.logging import get_logger
 
-STATUS_COLORS = {
-    "added": "#0ca30c",  # good
-    "modified": "#fab219",  # warning
-    "removed": "#d03b3b",  # critical
-}
-STATUS_LABELS = {"added": "Added", "modified": "Modified", "removed": "Removed"}
-CHANGE_ORDER = ["added", "modified", "removed"]
+log = get_logger(__name__)
 
 _INK_PRIMARY = "#0b0b0b"
 _INK_SECONDARY = "#52514e"
@@ -296,6 +293,15 @@ _HTML_STYLE = """
   .badge.modified { background: #a06700; }
   .badge.removed { background: var(--critical); }
   .conf { color: var(--ink-muted); font-size: 12px; }
+  .markup-row { display: flex; gap: 16px; flex-wrap: wrap; margin: 12px 0 20px; }
+  .markup-col { flex: 1 1 320px; min-width: 280px; }
+  .markup-caption { font-size: 12px; color: var(--ink-secondary); margin-bottom: 6px; }
+  .markup-img { width: 100%; border: 1px solid var(--border); border-radius: 8px;
+                background: var(--surface); }
+  .markup-legend { display: flex; gap: 14px; font-size: 12px; color: var(--ink-secondary);
+                    margin: 8px 0 4px; }
+  .markup-legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+                            margin-right: 4px; vertical-align: middle; }
 </style>
 """
 
@@ -324,10 +330,87 @@ def _render_deltas_table(deltas: list[Delta]) -> str:
     )
 
 
+def _markup_section(
+    report: DeltaReport,
+    doc_a: CanonicalDocument | None,
+    doc_b: CanonicalDocument | None,
+    markup_links: dict[str, Path] | None = None,
+) -> str:
+    """Embeds a before/after raster preview of the delta markup overlay
+    (plan §8) with real per-box hover tooltips, so a reviewer sees WHERE a
+    change is without leaving the HTML report. Local import: overlay.py
+    pulls in fitz/ezdxf/matplotlib, which JSON/Markdown-only callers of this
+    module shouldn't pay the import cost for.
+
+    `markup_links`, when given (write_report() passes the paths
+    write_markup() just wrote to the same out_dir), adds a download link to
+    the real exported PDF/PNG alongside each preview -- the PDF export in
+    particular carries live popup tooltips and vector fidelity the raster
+    preview doesn't.
+    """
+    if doc_a is None or doc_b is None or not report.deltas:
+        return ""
+    from src.markup.overlay import render_markup_png
+
+    try:
+        png_a = render_markup_png(doc_a, report.deltas, side="a")
+        png_b = render_markup_png(doc_b, report.deltas, side="b")
+    except Exception as exc:
+        # Optional visual extra over a source file the report doesn't
+        # strictly need (missing/corrupt file, no ODA converter for a raw
+        # .dwg, ...) -- the report's real content (stats/tables) must not
+        # fail just because the source drawing isn't available to re-render.
+        log.warning(
+            "markup overlay unavailable for HTML embed",
+            extra={
+                "extra_fields": {
+                    "pid_a": doc_a.pid, "pid_b": doc_b.pid, "error": str(exc),
+                }
+            },
+        )  # fmt: skip
+        return ""
+
+    b64_a = base64.b64encode(png_a).decode("ascii")
+    b64_b = base64.b64encode(png_b).decode("ascii")
+    legend = "".join(
+        f'<span><span class="swatch" style="background:{STATUS_COLORS[k]}"></span>'
+        f"{STATUS_LABELS[k]}</span>"
+        for k in CHANGE_ORDER
+    )
+    links = markup_links or {}
+    link_a = (
+        f' · <a href="{xml_escape(links["a"].name)}">download annotated {links["a"].suffix[1:]}</a>'
+        if "a" in links
+        else ""
+    )
+    link_b = (
+        f' · <a href="{xml_escape(links["b"].name)}">download annotated {links["b"].suffix[1:]}</a>'
+        if "b" in links
+        else ""
+    )
+    return f"""
+  <h2>Markup overlay</h2>
+  <div class="markup-legend">{legend}</div>
+  <div class="markup-row">
+    <div class="markup-col">
+      <div class="markup-caption">{xml_escape(report.pid_a)} (before){link_a}</div>
+      <img class="markup-img" src="data:image/png;base64,{b64_a}"
+           alt="Delta markup on {xml_escape(report.pid_a)}">
+    </div>
+    <div class="markup-col">
+      <div class="markup-caption">{xml_escape(report.pid_b)} (after){link_b}</div>
+      <img class="markup-img" src="data:image/png;base64,{b64_b}"
+           alt="Delta markup on {xml_escape(report.pid_b)}">
+    </div>
+  </div>
+"""
+
+
 def render_html(
     report: DeltaReport,
     doc_a: CanonicalDocument | None = None,
     doc_b: CanonicalDocument | None = None,
+    markup_links: dict[str, Path] | None = None,
 ) -> str:
     s = report.stats
 
@@ -393,7 +476,7 @@ def render_html(
       <div class="label">Alignment rate</div><div class="value">{s.alignment_rate:.0%}</div>
     </div>
   </div>
-
+  {_markup_section(report, doc_a, doc_b, markup_links)}
   <h2>Changes by page</h2>
   <div class="chart-card">{page_chart}</div>
 
@@ -427,6 +510,23 @@ def write_report(
 ) -> dict[str, Path]:
     with tracing.span("delta.report.write", pid_a=report.pid_a, pid_b=report.pid_b) as sp:
         out_dir.mkdir(parents=True, exist_ok=True)
+
+        markup_paths: dict[str, Path] = {}
+        if doc_a is not None and doc_b is not None and report.deltas:
+            from src.markup.overlay import write_markup
+
+            try:
+                markup_paths = write_markup(doc_a, doc_b, report.deltas, out_dir, basename)
+            except Exception as exc:
+                log.warning(
+                    "markup export failed; report will still be written without it",
+                    extra={
+                        "extra_fields": {
+                            "pid_a": doc_a.pid, "pid_b": doc_b.pid, "error": str(exc),
+                        }
+                    },
+                )  # fmt: skip
+
         paths = {
             "json": out_dir / f"{basename}.json",
             "markdown": out_dir / f"{basename}.md",
@@ -434,7 +534,9 @@ def write_report(
         }
         paths["json"].write_text(render_json(report), encoding="utf-8")
         paths["markdown"].write_text(render_markdown(report, doc_a, doc_b), encoding="utf-8")
-        paths["html"].write_text(render_html(report, doc_a, doc_b), encoding="utf-8")
+        html = render_html(report, doc_a, doc_b, markup_links=markup_paths or None)
+        paths["html"].write_text(html, encoding="utf-8")
+        paths.update({f"markup_{side}": p for side, p in markup_paths.items()})
         sp["files"] = list(paths.keys())
         return paths
 

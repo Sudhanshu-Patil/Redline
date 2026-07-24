@@ -118,3 +118,26 @@ across revisions — they show up as symmetric added/removed noise (119/119 on P
 than risking a confident-looking wrong pairing on content with no real signal. This is a
 deliberate precision-over-recall tradeoff, not a bug; see `IMPLEMENTATION_PLAN.md` §14 and the
 Phase 13 failure table.
+
+## Markup overlay findings from real data (Phase 9)
+
+Rendering the delta overlay onto Pair 3's DXF surfaced one non-obvious registration detail,
+verified by rasterizing the output and sampling actual pixel colors rather than eyeballing it:
+`ezdxf`'s `Frontend.draw_layout()` auto-fits and re-pads the matplotlib axes during drawing (a
+requested `xlim` of `(10, 150)` came out as `(3, 157)` after drawing), so placing overlay boxes
+by normalized fractional coordinates against the *requested* extents would have been measurably
+off. The fix — recover true DXF model-space coordinates (`canonical_bbox + min_x/min_y`, reversing
+`src/ingest/dwg.py`'s own normalization offset) and add matplotlib patches directly in *data*
+coordinates — sidesteps the padding entirely, since matplotlib places data-coordinate patches
+correctly regardless of what the final axes limits end up being. Confirmed correct via pixel
+sampling: the removed drain-stub `LINE` (a degenerate zero-width bbox) renders as red pixels
+`(208, 59, 59)` immediately straddling its native cyan `PIPING`-layer line, exactly where the
+recovered coordinates place it.
+
+Also worth recording so a future reader isn't confused by the rendered output: Pair 3's
+`EQUIPMENT` layer (the "26-KA-901 GAS LIFT SKID" outline box) is authored with DXF color index 1,
+which is red — the same color this project's convention uses for "removed". The two are
+unrelated (confirmed by pixel-sampling all four edges of the outline as uniform red in *both*
+A's and B's renderings, i.e. present unchanged on both sides, not a delta), but it's a
+coincidental clash worth knowing about before assuming every red line in a Pair 3 render is a
+flagged deletion.
