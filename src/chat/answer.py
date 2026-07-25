@@ -205,6 +205,7 @@ if __name__ == "__main__":
     from pathlib import Path
 
     from eval.schema import load_manifest
+    from src.delta.engine import compute_delta
     from src.ingest.dwg import DwgAdapter
     from src.ingest.pdf_native import PdfNativeAdapter
     from src.ingest.pdf_scanned import PdfScannedAdapter
@@ -240,7 +241,11 @@ if __name__ == "__main__":
     chat_index = ChatIndex(collection_name=f"chat_{manifest.pair_id}")
     n_a = chat_index.index_document(doc_a)
     n_b = chat_index.index_document(doc_b)
-    print(f"Indexed {n_a} elements from {doc_a.pid} and {n_b} from {doc_b.pid}.")
+    n_delta = chat_index.index_delta(compute_delta(doc_a, doc_b))
+    print(
+        f"Indexed {n_a} elements from {doc_a.pid}, {n_b} from {doc_b.pid}, "
+        f"and {n_delta} delta entries."
+    )
     print("Ask a question (Ctrl-C to quit):")
 
     while True:

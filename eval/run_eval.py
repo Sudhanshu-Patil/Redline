@@ -123,6 +123,7 @@ def run_chat_eval(qa_items: list[QAItem]) -> tuple[ChatEvalSummary, RetrievalEva
         index = ChatIndex(collection_name=f"eval_{manifest.pair_id}")
         index.index_document(doc_a)
         index.index_document(doc_b)
+        index.index_delta(compute_delta(doc_a, doc_b))
 
         retrieval_result = evaluate_retrieval(index, qa_items)
 

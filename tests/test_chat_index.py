@@ -10,8 +10,9 @@ import uuid
 import chromadb
 import pytest
 
-from src.canonical.model import CanonicalDocument
-from src.chat.index import ChatIndex, _extract_note_numbers, _extract_tag_tokens
+from src.canonical.model import BBox, CanonicalDocument
+from src.chat.index import ChatIndex, _delta_chunk_text, _extract_note_numbers, _extract_tag_tokens
+from src.delta.engine import Delta, DeltaReport, DeltaStats
 from tests.conftest import FakeEmbedder
 from tests.conftest import make_positioned_element as el
 
@@ -60,6 +61,72 @@ def doc_with_note():
                 note_number="37",
             ),
         ],
+    )
+
+
+def _bbox(page: int = 0, x0: float = 0.1, y0: float = 0.1) -> BBox:
+    return BBox(
+        page=page, x0=x0, y0=y0, x1=x0 + 0.05, y1=y0 + 0.05, page_width=1.0, page_height=1.0
+    )  # fmt: skip
+
+
+def _stats() -> DeltaStats:
+    return DeltaStats(
+        total_a=1, total_b=1, matched=0, unchanged=0, added=1, removed=1, modified=2,
+        matched_by_tier={}, alignment_rate=0.0, exact_key_rate=0.0,
+    )  # fmt: skip
+
+
+@pytest.fixture
+def sample_report():
+    return DeltaReport(
+        pid_a="pair1_A",
+        pid_b="pair1_B",
+        deltas=[
+            Delta(
+                change_type="modified",
+                element_type="setpoint",
+                old_element_id="pair1_A:pdf_native:00042",
+                new_element_id="pair1_B:pdf_native:00042",
+                old_text="SP = 257 bar (g)",
+                new_text="SP = 260 bar (g)",
+                old_bbox=_bbox(),
+                new_bbox=_bbox(),
+                match_tier="exact_key",
+                confidence=0.95,
+            ),  # fmt: skip
+            Delta(
+                change_type="added",
+                element_type="note",
+                new_element_id="pair1_B:pdf_native:00099",
+                new_text="42. NEW NOTE ADDED.",
+                new_bbox=_bbox(page=1),
+                confidence=1.0,
+            ),  # fmt: skip
+            Delta(
+                change_type="removed",
+                element_type="note",
+                old_element_id="pair1_A:pdf_native:00088",
+                old_text="41. OLD NOTE REMOVED.",
+                old_bbox=_bbox(),
+                confidence=1.0,
+            ),  # fmt: skip
+            Delta(
+                # pure geometry move: no text on either side -- must be
+                # excluded, there's nothing meaningful to phrase or search.
+                change_type="modified",
+                element_type="geometry",
+                old_element_id="pair3_A:dwg:00005",
+                new_element_id="pair3_B:dwg:00005",
+                old_text="",
+                new_text="",
+                old_bbox=_bbox(),
+                new_bbox=_bbox(x0=0.3, y0=0.3),
+                match_tier="geometry",
+                confidence=0.9,
+            ),  # fmt: skip
+        ],
+        stats=_stats(),
     )
 
 
@@ -206,3 +273,102 @@ class TestHybridSearch:
 
     def test_no_matches_returns_empty(self, index):
         assert index.hybrid_search("completely unrelated query", top_k=3) == []
+
+
+class TestIndexDelta:
+    @pytest.fixture
+    def index(self, sample_report):
+        # Overrides the module-level `index` fixture: index_delta() embeds
+        # its own synthesized sentences (never a raw element text), so the
+        # strict dict-keyed FakeEmbedder needs vectors keyed by whatever
+        # _delta_chunk_text() actually produces for this fixture's deltas --
+        # computed here, not duplicated as hard-coded strings, so this stays
+        # correct if that format ever changes.
+        basis = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        eligible = [
+            d
+            for d in sample_report.deltas
+            if (d.old_text or "").strip() or (d.new_text or "").strip()
+        ]
+        texts = {
+            _delta_chunk_text(d, sample_report.pid_a, sample_report.pid_b): basis[i]
+            for i, d in enumerate(eligible)
+        }
+        return ChatIndex(
+            collection_name=f"test_{uuid.uuid4().hex}",
+            embedder=FakeEmbedder(texts),
+            client=chromadb.EphemeralClient(),
+        )
+
+    def test_indexes_text_bearing_deltas_only(self, index, sample_report):
+        # 4 deltas in the fixture, but the pure-geometry move has no text on
+        # either side -- nothing meaningful to phrase or search, must be skipped.
+        count = index.index_delta(sample_report)
+        assert count == 3
+
+    def test_reindexing_is_idempotent(self, index, sample_report):
+        index.index_delta(sample_report)
+        count = index.index_delta(sample_report)
+        assert count == 3
+        assert index._collection.count() == 3
+
+    def test_empty_deltas_indexes_nothing(self, index):
+        empty_report = DeltaReport(pid_a="a", pid_b="b", deltas=[], stats=_stats())
+        assert index.index_delta(empty_report) == 0
+
+    def test_modified_chunk_names_both_pids_and_both_values(self, index, sample_report):
+        index.index_delta(sample_report)
+        got = index._collection.get(include=["documents"])
+        modified_text = next(t for t in got["documents"] if t.startswith("CHANGED"))
+        assert "SP = 257 bar (g)" in modified_text
+        assert "SP = 260 bar (g)" in modified_text
+        assert "pair1_A" in modified_text
+        assert "pair1_B" in modified_text
+
+    def test_added_chunk_is_labeled(self, index, sample_report):
+        index.index_delta(sample_report)
+        got = index._collection.get(include=["documents"])
+        assert any(t.startswith("ADDED") and "NEW NOTE ADDED" in t for t in got["documents"])
+
+    def test_removed_chunk_is_labeled(self, index, sample_report):
+        index.index_delta(sample_report)
+        got = index._collection.get(include=["documents"])
+        assert any(t.startswith("REMOVED") and "OLD NOTE REMOVED" in t for t in got["documents"])
+
+    def test_metadata_carries_element_type_and_page(self, index, sample_report):
+        index.index_delta(sample_report)
+        got = index._collection.get(include=["documents", "metadatas"])
+        modified_meta = next(
+            m
+            for t, m in zip(got["documents"], got["metadatas"], strict=True)
+            if t.startswith("CHANGED")
+        )
+        assert modified_meta["type"] == "setpoint"
+        assert modified_meta["page"] == 0
+        added_meta = next(
+            m
+            for t, m in zip(got["documents"], got["metadatas"], strict=True)
+            if t.startswith("ADDED")
+        )
+        assert added_meta["page"] == 1  # from new_bbox -- added has no old_bbox
+
+    def test_delta_chunks_retrievable_via_vector_search(self, index, sample_report):
+        # Uses the real _delta_chunk_text() to compute the exact synthesized
+        # sentence rather than duplicating its format as a hard-coded string,
+        # so this test breaks if the two ever drift apart. `index` here is
+        # this class's own fixture override (see above), which already
+        # supplies a distinct basis vector per eligible delta.
+        modified = sample_report.deltas[0]
+        modified_text = _delta_chunk_text(modified, sample_report.pid_a, sample_report.pid_b)
+        index._embedder._vectors["what changed about the setpoint"] = [0.9, 0.0, 0.1]
+        index.index_delta(sample_report)
+        results = index.vector_search("what changed about the setpoint", top_k=1)
+        assert results[0].text == modified_text
+        assert results[0].source == "vector"
+
+    def test_delta_chunks_are_not_matched_by_exact_lookup(self, index, sample_report):
+        # By design (see index_delta's docstring): a delta chunk is a full
+        # sentence, never a bare tag, so it must never surface via the
+        # tag-token equality path -- only vector search should ever find it.
+        index.index_delta(sample_report)
+        assert index.exact_lookup("What changed for pair1_A pair1_B?") == []

@@ -121,6 +121,7 @@ def _build_session(
         chat_index = ChatIndex(collection_name=f"dashboard_{basename}")
         chat_index.index_document(doc_a)
         chat_index.index_document(doc_b)
+        chat_index.index_delta(report)
 
         return create_session(pair_label, doc_a, doc_b, report, report_paths, chat_index)
 

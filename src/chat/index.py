@@ -1,8 +1,13 @@
-"""Retrieval index over a chat session's CanonicalDocument(s) (plan §7):
-hybrid retrieval = a deterministic exact tag/text lookup, unioned with
-chromadb vector search over the same embedding model the delta engine uses
-(SentenceTransformerEmbedder, plan §2 -- one embedding model, one place it's
-loaded, config-driven via EMBEDDING_MODEL).
+"""Retrieval index over a chat session's CanonicalDocument(s) and its
+DeltaReport (plan §7): hybrid retrieval = a deterministic exact tag/text
+lookup, unioned with chromadb vector search over the same embedding model
+the delta engine uses (SentenceTransformerEmbedder, plan §2 -- one embedding
+model, one place it's loaded, config-driven via EMBEDDING_MODEL).
+index_document() indexes each revision's static content ("what is X");
+index_delta() separately indexes the *relationship* between two revisions
+("what changed about X") -- a raw element from either document can never
+answer the second question on its own, since neither side of a change knows
+about the other.
 
 Exact lookup exists because P&ID tags ("26-KA-901", "PSV-204") are short,
 high-signal strings that a user will often quote verbatim -- semantic
@@ -43,6 +48,7 @@ from pydantic import BaseModel
 from src.canonical.model import CanonicalDocument, ElementType
 from src.config import settings
 from src.delta.align import Embedder, SentenceTransformerEmbedder
+from src.delta.engine import Delta, DeltaReport
 from src.observability import tracing
 
 _TAG_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9\-/]{1,}")
@@ -76,6 +82,32 @@ def _extract_tag_tokens(query: str) -> list[str]:
 
 def _extract_note_numbers(query: str) -> set[str]:
     return {m.group(1) for m in _NOTE_REFERENCE_RE.finditer(query)}
+
+
+def _delta_chunk_id(d: Delta) -> str:
+    return f"delta:{d.change_type}:{d.old_element_id or '_'}:{d.new_element_id or '_'}"
+
+
+def _delta_page(d: Delta) -> int:
+    """new_bbox is preferred (added/modified both have one); removed only
+    has old_bbox. Both are None only for the geometry-move case index_delta
+    already filters out before this is ever called."""
+    bbox = d.new_bbox or d.old_bbox
+    return bbox.page if bbox else 0
+
+
+def _delta_chunk_text(d: Delta, pid_a: str, pid_b: str) -> str:
+    """Phrases a Delta as a standalone sentence a semantic search can match
+    against a "what changed" style question -- unlike a raw element's text,
+    which only supports "what is X" questions since it describes one static
+    revision, not a relationship between two."""
+    if d.change_type == "modified":
+        return (
+            f"CHANGED ({d.element_type}) from {pid_a} to {pid_b}: '{d.old_text}' -> '{d.new_text}'"
+        )
+    if d.change_type == "added":
+        return f"ADDED in {pid_b}, not present in {pid_a} ({d.element_type}): '{d.new_text}'"
+    return f"REMOVED from {pid_a}, not present in {pid_b} ({d.element_type}): '{d.old_text}'"
 
 
 class RetrievedChunk(BaseModel):
@@ -112,7 +144,8 @@ def _chunk_from_row(
 class ChatIndex:
     """Wraps one chromadb collection: the grounding corpus for one chat
     session (typically both sides of a submitted pair, indexed via two
-    `index_document` calls so questions can span either revision)."""
+    `index_document` calls so questions can span either revision, plus one
+    `index_delta` call so questions can span the diff between them)."""
 
     def __init__(
         self,
@@ -149,6 +182,46 @@ class ChatIndex:
                     "note_number": el.attributes.get("note_number", ""),
                 }
                 for el in eligible
+            ]
+            self._collection.upsert(
+                ids=ids, embeddings=embeddings.tolist(), documents=texts, metadatas=metadatas
+            )
+            sp["indexed"] = len(ids)
+            return len(ids)
+
+    def index_delta(self, report: DeltaReport) -> int:
+        """Indexes each delta entry as its own retrievable chunk, phrased as
+        a change description (see _delta_chunk_text) -- closes the gap where
+        chat could answer "what is X" (grounded in one revision's static
+        content via index_document) but not "what changed about X" (which
+        needs the relationship between both revisions that only the delta
+        report itself carries). Vector-search-only by design: a delta's text
+        is a full descriptive sentence, never a bare tag, so it doesn't
+        participate in exact_lookup's tag-token equality match -- semantic
+        search is the right tool here, the same reasoning this module's own
+        docstring gives for why exact_lookup exists for tags in the first
+        place, just pointed the other direction.
+        """
+        with tracing.span("chat.index.delta", pid_a=report.pid_a, pid_b=report.pid_b) as sp:
+            eligible = [
+                d for d in report.deltas if (d.old_text or "").strip() or (d.new_text or "").strip()
+            ]
+            if not eligible:
+                sp["indexed"] = 0
+                return 0
+            texts = [_delta_chunk_text(d, report.pid_a, report.pid_b) for d in eligible]
+            embeddings = self._embedder.embed(texts)
+            ids = [_delta_chunk_id(d) for d in eligible]
+            combined_pid = f"{report.pid_a}→{report.pid_b}"
+            metadatas: list[Mapping[str, Any]] = [
+                {
+                    "pid": combined_pid,
+                    "revision_label": "",
+                    "type": d.element_type,
+                    "page": _delta_page(d),
+                    "note_number": "",
+                }
+                for d in eligible
             ]
             self._collection.upsert(
                 ids=ids, embeddings=embeddings.tolist(), documents=texts, metadatas=metadatas

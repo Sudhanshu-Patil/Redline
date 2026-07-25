@@ -26,8 +26,9 @@ honest document here.
 3. **Report** the delta as JSON, Markdown, and an HTML report with charts, plus the delta drawn
    back onto the source document as colored bbox overlays (green/red/amber for
    added/removed/modified).
-4. **Answer questions** about either revision with hybrid retrieval (deterministic exact-tag
-   lookup unioned with vector search) + cross-encoder reranking + a citation-or-refuse system
+4. **Answer questions** about either revision, or about what changed between them, with hybrid
+   retrieval (deterministic exact-tag lookup unioned with vector search over both revisions'
+   content *and* the delta report itself) + cross-encoder reranking + a citation-or-refuse system
    prompt, so an unanswerable question gets "I don't have grounding for that," not a guess.
 5. **Observe** all of it — every stage emits an OTel-shaped trace span and a structured JSON log
    line from the first phase onward, aggregated live at `/metrics` with no separate metrics
@@ -136,6 +137,23 @@ then reranks only the vector-only half of the candidate set within
 `remaining_budget = rerank_top_k - len(exact matches)` — every exact match survives, full stop.
 Trade-off: a deliberate precision bias on tag lookups over the reranker's own judgment, accepted
 because a wrong citation is worse than a slightly fuller context window.
+
+### The delta report is retrievable too, not just the two documents
+
+`chat_index.index_delta()` (`src/chat/index.py`) indexes each delta entry as its own chunk,
+phrased as a sentence ("CHANGED ... from '257 bar (g)' to '260 bar (g)'") — because a raw element
+from either revision can only ever ground "what is X," never "what changed about X"; only the
+delta itself knows the relationship between the two revisions. Verified live, not just unit
+tested: asking a running session "What changed about the PSV setpoints between the two
+revisions?" returns an answer citing both a normal document element *and* a delta chunk
+(`[delta:modified:pair1_A:pdf_native:00141:pair1_B:pdf_native:00822]`) in the same response.
+Retrieval-quality regression-checked against the existing labeled QA set before and after (both
+0.4545 recall@k / MRR — unchanged). Trade-off, found the same day this shipped: a delta whose
+underlying text is itself low-information (pair1's "added" note is a bare `"NOTE 29"`
+cross-reference marker, not the note's actual content — a pre-existing data characteristic, not
+new) can still lose the ranking race against dozens of near-identical bare references already in
+the corpus. Vector search only helps when the underlying text has enough signal to embed well;
+it doesn't fix a genuinely uninformative source string.
 
 ### Cite-or-refuse, not best-effort
 
