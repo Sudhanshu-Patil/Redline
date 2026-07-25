@@ -56,7 +56,7 @@ edits.
 
 ## 5. Grounded chat — citations and refusal (60s)
 
-From any session, click **Chat**. Ask a real question:
+From any session, scroll to the "Grounded chat" card and click **Open chat**. Ask a real question:
 
 > What is the set pressure of PSV-9066A?
 
