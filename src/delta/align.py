@@ -278,25 +278,43 @@ def embedding_proximity_match(
         "delta.align.embedding_proximity_match", a=len(a_elements), b=len(b_elements)
     ) as sp:
         min_len = settings.alignment_min_embed_text_len
-        a_eligible = [el for el in a_elements if len(el.text.strip()) >= min_len]
-        b_eligible = [el for el in b_elements if len(el.text.strip()) >= min_len]
+        # Candidate generation (all non-empty-text elements) is deliberately
+        # NOT filtered by min_len -- only *embedding* is. The tight band
+        # below (dist <= tight) never uses the embedding at all, position
+        # alone is decisive; filtering candidate generation itself by
+        # min_len (the original code) meant a short element could never be
+        # tight-band matched even at an *identical* position across
+        # revisions. Found via a live eval run on Pair 1 (2026-07-25): 235
+        # of 237 delta false positives were single-character text_block
+        # elements (kind="flag", e.g. valve position letters -- a real,
+        # deliberately classified category, not noise) that were genuinely
+        # unchanged between revisions but always scored as one spurious add
+        # + one spurious remove each, because they never reached the
+        # position-only tight band in the first place.
+        a_eligible = [el for el in a_elements if el.text.strip()]
+        b_eligible = [el for el in b_elements if el.text.strip()]
 
         if not a_eligible or not b_eligible:
             sp["matched"] = 0
             return [], a_elements, b_elements
 
-        a_texts = [el.text.strip() for el in a_eligible]
-        b_texts = [el.text.strip() for el in b_eligible]
-        a_emb = embedder.embed(a_texts)
-        b_emb = embedder.embed(b_texts)
+        a_embeddable = [el for el in a_eligible if len(el.text.strip()) >= min_len]
+        b_embeddable = [el for el in b_eligible if len(el.text.strip()) >= min_len]
+        a_emb_by_id: dict[str, np.ndarray] = {}
+        b_emb_by_id: dict[str, np.ndarray] = {}
+        if a_embeddable and b_embeddable:
+            a_vecs = embedder.embed([el.text.strip() for el in a_embeddable])
+            b_vecs = embedder.embed([el.text.strip() for el in b_embeddable])
+            a_emb_by_id = dict(zip((el.id for el in a_embeddable), a_vecs, strict=True))
+            b_emb_by_id = dict(zip((el.id for el in b_embeddable), b_vecs, strict=True))
 
         tight = settings.alignment_bbox_proximity_tolerance
         loose = settings.alignment_tier3_loose_proximity
         min_sim = settings.alignment_embedding_similarity_threshold
 
         candidates: list[tuple[float, Element, Element, float]] = []
-        for i, a in enumerate(a_eligible):
-            for j, b in enumerate(b_eligible):
+        for a in a_eligible:
+            for b in b_eligible:
                 if a.type != b.type:
                     # Two structurally-similar-but-unrelated documents (same
                     # P&ID template, different equipment -- plan §6's Pair 4)
@@ -333,7 +351,14 @@ def embedding_proximity_match(
                     # fine-grained ordering inside it.
                     score = 0.9 + 0.1 * (1 - dist / tight) if tight > 0 else 1.0
                 elif dist <= loose:
-                    sim = float(np.dot(a_emb[i], b_emb[j]))
+                    a_vec = a_emb_by_id.get(a.id)
+                    b_vec = b_emb_by_id.get(b.id)
+                    if a_vec is None or b_vec is None:
+                        # At least one side is shorter than min_len -- no
+                        # embedding to compare, and the loose band (unlike
+                        # tight) needs semantic similarity to be meaningful.
+                        continue
+                    sim = float(np.dot(a_vec, b_vec))
                     if sim < min_sim:
                         continue
                     score = sim * 0.89  # always < 0.9: never outranks a tight-band match

@@ -187,6 +187,30 @@ def compute_delta(
                 "heavily-edited one."
             )
 
+        # Complementary to the warning above: that one needs *both* sides to
+        # already produce plenty of keyed elements before it can compare
+        # their match rate. A document whose tag-numbering convention isn't
+        # recognized at all by the classifiers in src/ingest/pdf_native.py
+        # (grounded in one client's convention -- see that module's own
+        # docstring) produces very few keyed elements on *both* sides, so
+        # the warning above never gets enough signal to fire, even though
+        # this is exactly the case a user most needs to be told about: most
+        # content fell through to generic text_block and will only be
+        # matched by looser position/similarity heuristics, not exact
+        # identity.
+        keyed_fraction = (keyed_a + keyed_b) / max(total_a + total_b, 1)
+        if (
+            total_a + total_b >= settings.low_keyed_fraction_min_elements
+            and keyed_fraction < settings.low_keyed_fraction_threshold
+        ):
+            warnings.append(
+                f"Only {keyed_fraction:.1%} of elements were recognized as tags, instrument "
+                f"loops, valves, or line numbers in {doc_a.pid}/{doc_b.pid} — this document's "
+                "tag-numbering convention may not match what this system's classifiers expect, "
+                "so most content will be matched by position/similarity rather than exact "
+                "identity, and delta quality may be lower than usual."
+            )
+
         stats = DeltaStats(
             total_a=total_a,
             total_b=total_b,

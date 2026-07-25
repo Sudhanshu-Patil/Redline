@@ -5,7 +5,19 @@
       "qa_id": "QA-01",
       "correctness": 5,
       "groundedness": 5,
-      "notes": "Actual answer: 'The set pressure of PSV-9066A is 260 bar (g) [pair1_B:pdf_native:00824].' Correct value, single valid citation, matches reference exactly."
+      "notes": "Actual answer: 'The set pressure of PSV-9066A is 260 bar(g) [pair1_B:pdf_native:00824].' Correct value, single valid citation, matches reference exactly."
+    },
+    {
+      "qa_id": "QA-02",
+      "correctness": 5,
+      "groundedness": 5,
+      "notes": "Actual answer: 'The set pressure of PSV-9066B is 260 bar(g) [pair1_B:pdf_native:00824].' Correct value, matches reference exactly."
+    },
+    {
+      "qa_id": "QA-03",
+      "correctness": 5,
+      "groundedness": 5,
+      "notes": "Actual answer: 'PSV 9066A/B set pressure is revised to 260 bar(g) [pair1_B:pdf_native:00824].' Matches note 37's actual text and the reference summary; citation checked against the real element (00824 is genuinely note 37's element, confirmed by direct index lookup)."
     },
     {
       "qa_id": "QA-04",
@@ -14,22 +26,70 @@
       "notes": "Actual answer quotes note 8 verbatim with a valid citation to pair1_A:pdf_native:00007. Matches reference exactly."
     },
     {
+      "qa_id": "QA-05",
+      "correctness": 1,
+      "groundedness": 4,
+      "notes": "Actual answer: 'NOT_GROUNDED: The content of note 16 is not provided in the given context.' FALSE REFUSAL -- note 16 is genuinely present and, as of this scorecard's run, was even being retrieved into the LLM's context (confirmed by direct inspection: the correct passage was the top exact-match hit). The refusal traces to a since-identified and since-fixed prompt-following issue (a bare 'NOTE 16' cross-reference fragment retrieved alongside the real definition confused the model into declining even with the correct passage present) -- verified fixed via 3/3 consistent correct answers in isolated direct-LLM testing after adding a clarifying system-prompt rule (see PROVENANCE.md), but this specific scorecard run predates that fix. Correctness low (delivered zero of the expected info); groundedness scored higher than correctness because the model declined rather than fabricated, the right failure mode even when the refusal itself is wrong."
+    },
+    {
+      "qa_id": "QA-06",
+      "correctness": 5,
+      "groundedness": 5,
+      "notes": "Actual answer cites the design-pressure value from both revisions with valid citations. Matches reference exactly."
+    },
+    {
+      "qa_id": "QA-07",
+      "correctness": 1,
+      "groundedness": 4,
+      "notes": "Actual answer: 'NOT_GROUNDED: The content of note 33 is not provided in the given context.' Same false-refusal pattern and same since-fixed root cause as QA-05 (see notes there)."
+    },
+    {
+      "qa_id": "QA-08",
+      "correctness": 5,
+      "groundedness": 5,
+      "notes": "Actual answer: 'NOTE 19 describes a high alarm at 40 % of design DP [...].' Borderline call: note 19's full text also specifies a compressor high-high trip at 50% of design DP, which the answer omits. Scored 5/5 because the question specifically asks 'what alarm' (singular) and the 40%-DP high alarm is the direct, correctly-cited answer to that -- the 50% figure describes a trip action, not an alarm. A stricter reading that expected the full note recited verbatim could reasonably dock this; flagging the nuance rather than treating it as an unambiguous 5/5."
+    },
+    {
       "qa_id": "QA-09",
       "correctness": 1,
       "groundedness": 4,
-      "notes": "Actual answer: 'NOT_GROUNDED: The content of note 11 is not provided in the given context.' This is a FALSE REFUSAL -- note 11 is genuinely present in the document (verified: pdf_native adapter extracts '11. COMPRESSOR MOTOR EQUIPPED WITH VARIABLE SPEED DRIVE (VSD)...' as its own element), so correctness is low: it provided zero of the expected information. Groundedness is scored higher than correctness (not 1) because the model did not fabricate or guess -- it declined rather than hallucinate, which is the right failure mode even though the refusal itself was wrong. Root cause is a retrieval miss (the note apparently didn't survive into the reranked top-k for this phrasing), not a generation-side hallucination."
+      "notes": "Actual answer: 'NOT_GROUNDED: The content of NOTE 11 is not provided in the given context.' This is the documented known-hard case (src/chat/index.py module docstring, found during Phase 8): 'HH: 250' has no textual link to the 'PIT-9062' tag in the extracted text, so retrieval/rerank can miss it even though the tag itself IS retrieved. Same reasoning as QA-05/07: correctness low, groundedness higher since the model declined honestly instead of guessing."
+    },
+    {
+      "qa_id": "QA-10",
+      "correctness": 5,
+      "groundedness": 5,
+      "notes": "Actual answer: 'Yes, there is an instrument tagged PIT-9062 [...].' Correct, cited from both revisions."
     },
     {
       "qa_id": "QA-11",
       "correctness": 1,
       "groundedness": 4,
-      "notes": "Actual answer: 'NOT_GROUNDED: No information is provided about the HH trip limit for PIT-9062.' This is the documented known-hard case (src/chat/index.py module docstring, found during Phase 8): 'HH: 250' has no textual link to the 'PIT-9062' tag in the extracted text, so retrieval/rerank can miss it even though the tag itself IS retrieved. Same reasoning as QA-09: correctness low (no information delivered), groundedness scored higher than 1 since the model declined honestly instead of guessing a number."
+      "notes": "Actual answer: 'NOT_GROUNDED: There is no information provided about the HH trip limit for PIT-9062.' This is the documented known-hard case (src/chat/index.py module docstring, found during Phase 8): 'HH: 250' has no textual link to the 'PIT-9062' tag in the extracted text, so retrieval/rerank can miss it even though the tag itself IS retrieved. Root cause is a retrieval miss, not a generation-side hallucination -- a deliberate, reasoned non-fix (spatial-context enrichment at index time was considered and rejected: real risk of mis-attributing a value to the wrong nearby tag on dense layouts). Same score as this item's original hand-label from the first (n=5) validation pass -- consistent on repeat measurement."
     },
     {
       "qa_id": "QA-12",
       "correctness": 5,
       "groundedness": 5,
-      "notes": "Actual answer: 'NOT_GROUNDED: There is no information provided about the ambient design temperature range.' Correct refusal of a genuinely unanswerable question -- exactly the desired behavior."
+      "notes": "Actual answer: 'NOT_GROUNDED: The provided context does not contain information about the ambient design temperature range.' Correct refusal of a genuinely unanswerable question -- exactly the desired behavior."
+    },
+    {
+      "qa_id": "QA-13",
+      "correctness": 5,
+      "groundedness": 5,
+      "notes": "Actual answer correctly refuses an unanswerable question (PSV warranty period is not in the document)."
+    },
+    {
+      "qa_id": "QA-14",
+      "correctness": 5,
+      "groundedness": 5,
+      "notes": "Actual answer correctly refuses an unanswerable question (piping paint color is not in the document)."
+    },
+    {
+      "qa_id": "QA-15",
+      "correctness": 5,
+      "groundedness": 5,
+      "notes": "Actual answer correctly refuses an unanswerable question (vendor project manager is not in the document)."
     }
   ]
 }

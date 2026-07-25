@@ -17,7 +17,7 @@
       "answerable": true,
       "expected_citation_texts": ["SP = 260 bar (g)"],
       "expected_answer_summary": "260 bar (g), per revision B (was 257 bar (g) in revision A).",
-      "held_out": false
+      "held_out": true
     },
     {
       "qa_id": "QA-03",
@@ -26,7 +26,7 @@
       "answerable": true,
       "expected_citation_texts": ["37. PSV 9066A/B SET PRESSURE REVISED TO 260 BAR(G)."],
       "expected_answer_summary": "It records that the PSV 9066A/B set pressure was revised to 260 bar(g).",
-      "held_out": false
+      "held_out": true
     },
     {
       "qa_id": "QA-04",
@@ -46,7 +46,7 @@
         "16. PRIMARY SEAL GAS IS TAKEN DOWNSTREAM LAST COMPRESSING STAGE (8TH STAGE). SKID INTERNAL DESIGN."
       ],
       "expected_answer_summary": "Primary seal gas is taken downstream of the last (8th) compressing stage; this is skid-internal design.",
-      "held_out": false
+      "held_out": true
     },
     {
       "qa_id": "QA-06",
@@ -57,7 +57,7 @@
         "22. DESIGN PRESSURE IN EXTERNAL SYSTEM DOWNSTREAM COMPRESSOR 257 BARG."
       ],
       "expected_answer_summary": "The design pressure in the external system downstream of the compressor is 257 barg.",
-      "held_out": false
+      "held_out": true
     },
     {
       "qa_id": "QA-07",
@@ -66,7 +66,7 @@
       "answerable": true,
       "expected_citation_texts": ["33. CHEMICAL CLEANING (CIP); BLEED/DRAIN CONNECTION."],
       "expected_answer_summary": "It's a chemical cleaning (CIP) / bleed-drain connection note.",
-      "held_out": false
+      "held_out": true
     },
     {
       "qa_id": "QA-08",
@@ -77,7 +77,7 @@
         "19. SUCTION STRAINER (COMMISSIONING PHASE ONLY) WITH STRAIGHT PIPE RUNS MIN. 5xD UPSTREAM AND 2xD DOWNSTREAM TO AVOID DAMAGE DUE TO TURBULENCE. HIGH ALARM AT 40 % OF DESIGN DP AND COMPRESSOR HIGH-HIGH TRIP AT 50 % OF DESIGN DP RECOMMENDED BY"
       ],
       "expected_answer_summary": "A high alarm at 40% of design differential pressure, with compressor high-high trip recommended at 50% of design DP.",
-      "held_out": false
+      "held_out": true
     },
     {
       "qa_id": "QA-09",
@@ -97,7 +97,7 @@
       "answerable": true,
       "expected_citation_texts": ["PIT-9062"],
       "expected_answer_summary": "Yes, PIT-9062 is present (a pressure instrument/transmitter tag).",
-      "held_out": false
+      "held_out": true
     },
     {
       "qa_id": "QA-11",
@@ -124,7 +124,7 @@
       "answerable": false,
       "expected_citation_texts": [],
       "expected_answer_summary": "Not present in the document -- should be refused, not guessed.",
-      "held_out": false
+      "held_out": true
     },
     {
       "qa_id": "QA-14",
@@ -133,7 +133,7 @@
       "answerable": false,
       "expected_citation_texts": [],
       "expected_answer_summary": "Not present in the document -- should be refused, not guessed.",
-      "held_out": false
+      "held_out": true
     },
     {
       "qa_id": "QA-15",
@@ -142,7 +142,7 @@
       "answerable": false,
       "expected_citation_texts": [],
       "expected_answer_summary": "Not present in the document -- should be refused, not guessed.",
-      "held_out": false
+      "held_out": true
     }
   ]
 }

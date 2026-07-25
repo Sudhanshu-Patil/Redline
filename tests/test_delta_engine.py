@@ -166,6 +166,43 @@ class TestLowAlignmentWarning:
         assert report.warnings == []
 
 
+class TestLowKeyedFractionWarning:
+    """Complementary to TestLowAlignmentWarning: that warning needs *both*
+    sides to already produce plenty of keyed elements before it can compare
+    their match rate, so a document whose tag conventions aren't recognized
+    at all (almost nothing gets a real key) never gives it enough signal to
+    fire -- exactly the case a user most needs to be told about."""
+
+    def test_fires_when_almost_nothing_is_keyed(self):
+        # 30 generic text_block elements per side, none of them a
+        # recognized tag/instrument/valve/line-number type -- simulates a
+        # document whose conventions this system's classifiers don't know.
+        a_elements = [el(f"random text {i}", element_type="text_block") for i in range(30)]
+        b_elements = [el(f"random text {i}", element_type="text_block") for i in range(30)]
+        embedder = FakeEmbedder({f"random text {i}": [1.0, 0.0] for i in range(30)})
+        report = compute_delta(doc("A", a_elements), doc("B", b_elements), embedder=embedder)
+        assert any("tag-numbering convention" in w for w in report.warnings)
+        # Must not also fire the low-exact-key-rate warning -- with zero
+        # keyed elements on either side there's no meaningful rate to
+        # compare, and a double warning here would just be confusing.
+        assert not any("Low exact-key alignment" in w for w in report.warnings)
+
+    def test_does_not_fire_on_well_keyed_documents(self):
+        a_elements = [el(f"TAG-{i}", element_type="tag") for i in range(25)]
+        b_elements = [el(f"TAG-{i}", element_type="tag") for i in range(25)]
+        report = compute_delta(
+            doc("A", a_elements), doc("B", b_elements), embedder=FakeEmbedder({})
+        )
+        assert report.warnings == []
+
+    def test_does_not_fire_below_minimum_element_count(self):
+        a_elements = [el("random text", element_type="text_block")]
+        b_elements = [el("random text", element_type="text_block")]
+        embedder = FakeEmbedder({"random text": [1.0, 0.0]})
+        report = compute_delta(doc("A", a_elements), doc("B", b_elements), embedder=embedder)
+        assert report.warnings == []
+
+
 class TestLLMNeverCalled:
     """BRIEF rule 2: delta alignment and classification stay deterministic,
     non-LLM logic. This test proves it at runtime rather than documenting it:

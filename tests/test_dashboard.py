@@ -12,7 +12,8 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from src.dashboard.app import _safe_path_component, app
+from src.config import settings
+from src.dashboard.app import _safe_path_component, _upload_suffix, app
 from src.dashboard.state import get_session, reset_sessions
 
 PAIR1_A = "data/samples/originals/lift_gas_compressor_26-KA-901.pdf"
@@ -71,6 +72,29 @@ class TestSafePathComponent:
 
     def test_long_input_is_capped(self):
         assert len(_safe_path_component("a" * 500)) <= 80
+
+
+class TestUploadSuffix:
+    """Real bug found in a real-world review: format="dwg" always saved
+    uploads as .dxf, so DwgAdapter's .dwg-suffix conversion check could
+    never fire through the dashboard, even for a genuine .dwg upload with a
+    working ODA File Converter -- it would always be hard-parsed as DXF and
+    fail with a confusing low-level ezdxf error instead of converting."""
+
+    def test_pdf_native_always_dot_pdf(self):
+        assert _upload_suffix("pdf_native", "whatever.xyz") == ".pdf"
+
+    def test_pdf_scanned_always_dot_pdf(self):
+        assert _upload_suffix("pdf_scanned", "scan.tif") == ".pdf"
+
+    def test_dwg_format_with_dwg_filename_keeps_dwg_suffix(self):
+        assert _upload_suffix("dwg", "drawing.DWG") == ".dwg"  # case-insensitive
+
+    def test_dwg_format_with_dxf_filename_uses_dxf_suffix(self):
+        assert _upload_suffix("dwg", "drawing.dxf") == ".dxf"
+
+    def test_dwg_format_with_unrecognized_filename_defaults_to_dxf(self):
+        assert _upload_suffix("dwg", "drawing.txt") == ".dxf"
 
 
 def _submit_sample(client: TestClient, pair_id: str) -> str:
@@ -175,6 +199,34 @@ class TestSessionView:
 
 
 class TestSubmitUpload:
+    def test_empty_file_shows_friendly_error_not_crash(self, client):
+        # A genuinely corrupt/empty upload with the *correct* declared
+        # format (unlike test_mismatched_format_..., which claims the wrong
+        # format) -- pymupdf raises EmptyFileError, must still 400 cleanly.
+        r = client.post(
+            "/submit",
+            data={"pid_a": "a", "pid_b": "b", "format_a": "pdf_native", "format_b": "pdf_native"},
+            files={
+                "doc_a_file": ("a.pdf", b"", "application/pdf"),
+                "doc_b_file": ("b.pdf", b"", "application/pdf"),
+            },
+        )
+        assert r.status_code == 400
+        assert "Could not process" in r.text
+
+    def test_garbage_content_shows_friendly_error_not_crash(self, client):
+        garbage = b"this is not a pdf file at all, just random bytes \x00\x01\x02"
+        r = client.post(
+            "/submit",
+            data={"pid_a": "a", "pid_b": "b", "format_a": "pdf_native", "format_b": "pdf_native"},
+            files={
+                "doc_a_file": ("a.pdf", garbage, "application/pdf"),
+                "doc_b_file": ("b.pdf", garbage, "application/pdf"),
+            },
+        )
+        assert r.status_code == 400
+        assert "Could not process" in r.text
+
     def test_missing_files_shows_friendly_error(self, client):
         r = client.post(
             "/submit",
@@ -218,6 +270,41 @@ class TestSubmitUpload:
             )
         assert r.status_code == 400
         assert "Could not process" in r.text
+
+    def test_dwg_upload_attempts_oda_conversion_not_a_raw_dxf_parse(self, client, monkeypatch):
+        # The fix for the bug above: a genuinely .dwg-named upload must
+        # route through convert_dwg_to_dxf (and surface *that* function's
+        # clear error when no converter is available), never silently fall
+        # back to parsing raw DWG bytes as DXF.
+        monkeypatch.setattr("src.ingest.dwg.resolve_oda_converter", lambda: None)
+        fake_dwg_bytes = b"not real binary DWG content, just needs a .dwg filename"
+        r = client.post(
+            "/submit",
+            data={"pid_a": "a", "pid_b": "b", "format_a": "dwg", "format_b": "dwg"},
+            files={
+                "doc_a_file": ("drawing_a.dwg", fake_dwg_bytes, "application/octet-stream"),
+                "doc_b_file": ("drawing_b.dwg", fake_dwg_bytes, "application/octet-stream"),
+            },
+        )
+        assert r.status_code == 400
+        assert "ODA File Converter" in r.text
+
+    def test_oversized_upload_shows_friendly_error_not_crash(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "dashboard_max_upload_mb", 0)
+        with open(PAIR1_A, "rb") as file_a, open(PAIR1_B, "rb") as file_b:
+            r = client.post(
+                "/submit",
+                data={
+                    "pid_a": "a", "pid_b": "b",
+                    "format_a": "pdf_native", "format_b": "pdf_native",
+                },  # fmt: skip
+                files={
+                    "doc_a_file": ("a.pdf", file_a, "application/pdf"),
+                    "doc_b_file": ("b.pdf", file_b, "application/pdf"),
+                },
+            )
+        assert r.status_code == 400
+        assert "upload limit" in r.text
 
 
 class TestChat:

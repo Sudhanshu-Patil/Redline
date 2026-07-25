@@ -333,3 +333,201 @@ flattened element pool regardless of page — an N-page duplicate set would have
 same-size sub-problems, O(n·m·N) — confirmed by Pair 5's own measurement above showing
 close-to-linear (not quadratic) time growth from 2 to 10 pages. A genuine 500-sheet set would
 have made the pre-fix quadratic behavior actively unusable, not just wrong.
+
+## Real-world hardening pass (post-Phase-12): four genuine bugs found by distrusting the test suite
+
+Every phase up to this point was checkpointed on "tests pass, live-verified once." Before Phase
+13, we deliberately went back and asked a harder question: not "does it pass," but "does it
+actually work" — by reading the *committed* `eval/scorecard.json` line by line against its own
+questions and ground truth, instead of trusting the aggregate numbers. That distrust turned up
+two significant, previously-undetected bugs (the delta noise and the chat retrieval mismatch
+below), which in turn led to two more once fixing them changed what was actually being exercised.
+None of these were caught by 494 passing unit tests, because the tests were unit tests — this
+required reading real model output against real ground truth.
+
+### Bug 1: 235 of 237 Pair 1 delta "changes" were single-character noise, not edits
+
+The committed scorecard's delta P/R/F1 looked catastrophic on inspection — Pair 1 aggregate
+precision of **0.0207** (tp=5, fp=237, fn=1) despite Pair 1 being the best-understood, most
+heavily-tested sample pair in the whole project. Recall (0.83) was fine; something was burying 6
+real edits under 237 false positives.
+
+Direct inspection of `compute_delta()`'s raw output (not just the P/R/F1 summary) showed the false
+positives were overwhelmingly `('removed', 'text_block')` / `('added', 'text_block')` pairs whose
+text was a single character: `'U'`, `'C'`, `'P'`, `'*'`, `'S'`, `'D'`... These are a real,
+deliberately classified category (`classify_block_lines`'s `kind="flag"` — valve position letters
+scattered around the P&ID), not extraction garbage, and the vast majority are genuinely unchanged
+between revision A and B.
+
+**Root cause** (`src/delta/align.py::embedding_proximity_match`): candidate generation itself was
+filtered by `alignment_min_embed_text_len` (2) before the tight/loose distance bands were ever
+evaluated — so a single-character element could never reach the *tight* band, even though the
+tight band is **position-decisive and never uses the embedding at all** (`dist <= tight` skips
+straight to a score; only the *loose* band needs semantic similarity). Two identical, identically
+positioned `'U'` flags in revision A and B were therefore structurally unmatchable by any tier:
+too short for tier 1 (no stable key — many identical single letters exist), filtered out of tier
+3's candidate pool entirely regardless of position.
+
+**Fix:** candidate generation is no longer filtered by `min_len` — only *embedding computation* is
+(a dict keyed by element id, populated only for elements meeting `min_len`, looked up on the loose
+band; the tight band never touches it). Verified directly against real Pair 1 data:
+
+| | Before | After |
+|---|---|---|
+| Pair 1 total deltas | 242 | **8** |
+| Pair 1 alignment_rate | 0.8558 | **0.9976** |
+| Pair 1 precision / recall / F1 | 0.0207 / 0.8333 / 0.0403 | **0.625 / 0.8333 / 0.7143** |
+
+The remaining 8 deltas map onto the pair's actual intentional edits (PSV setpoints, PIT HH limit,
+note add/remove, flow rate). Pair 3 (DXF) was already fine (0.71 precision, unaffected — its
+elements don't include single-character flags). **Pair 2 (scanned/OCR) is NOT fixed by this** —
+its false positives (819, barely moved from 861) are a different, OCR-text-variance root cause,
+not the min_len bug; see "what's still honestly broken" below.
+
+Two existing unit tests encoded the *old, incorrect* behavior as correct
+(`test_short_text_below_min_length_is_never_embedded` asserted two identical same-position `'*'`
+elements do *not* match) — rewritten into two tests that separate the two real properties: short
+text still matches via the embedding-free tight band at the same position, but still correctly
+fails to match via the loose band (where no embedding exists to compare).
+
+### Bug 2: chat retrieval had no way to answer "what does note N say?"
+
+Reading the scorecard's actual answer text against its own questions (not just the aggregate
+correctness/groundedness averages) showed a stark pattern: of 11 answerable QA-pair1 questions,
+**6 got a false `NOT_GROUNDED` refusal** — and 5 of those 6 were exactly the phrasing "what does
+note N say" / "what is note N about."
+
+**Root cause** (`src/chat/index.py::exact_lookup`): the deterministic exact-match path extracts
+tag-shaped tokens from the query (`_extract_tag_tokens`, requires a digit and length ≥ 3) and
+matches them against an element's *entire* text. A bare note number like `"37"` is filtered out
+for being too short, and even if it weren't, it would never equal a whole note's full-sentence
+text via substring match. So every "note N" question fell through to pure vector search alone —
+which is exactly why some notes happened to retrieve (note 8, note 22) and others didn't (note
+37, 16, 33, 19, 11): it was never a deterministic guarantee, just semantic-similarity luck.
+
+**Fix:** `note_number` (already extracted at ingest time by `classify_block_lines`, previously
+only used internally by the delta engine's tier-1 key) is now also stored in chromadb's indexed
+metadata, and a new `_extract_note_numbers` pattern (`\bnote\s*(?:number\s*)?#?\s*(\d{1,3})\b`)
+lets `exact_lookup` match a query's note-number reference against it directly — deterministic, no
+LLM, same "short high-signal identifier deserves exact matching" philosophy as the existing tag
+lookup.
+
+### Bug 3: a fixed exact match could still be reranked out of the LLM's context
+
+Fixing bug 2 alone was not sufficient — direct testing after the fix showed `exact_lookup("What
+is note 16 about?")` correctly found the right passage, yet the live scorecard still refused.
+`answer_question` (`src/chat/answer.py`) reranked *everything* `hybrid_search` returned uniformly,
+including exact-source hits, down to `rerank_top_k` (5) slots — so a deterministic, guaranteed-
+relevant exact match could still lose to the cross-encoder's approximate judgment on a crowded
+query. This is the same crowding-out mechanism already documented in `chat/index.py`'s own
+docstring for the HH:250/PIT-9062 case, just newly reachable for exact hits too, which by
+construction should never lose that competition.
+
+**Fix:** exact-source chunks now always survive into the final context; only the remaining budget
+(`rerank_top_k - len(exact)`) is spent reranking the vector-sourced candidates.
+
+### Bug 4: a correct passage in context wasn't enough — the model still refused
+
+With bugs 2 and 3 both fixed, three of the five "note N" false refusals resolved on the next live
+run, but two (note 16, note 33) still refused. Reproducing the *exact* context that would be sent
+to the LLM and calling it directly (bypassing retrieval/reranking entirely) confirmed the correct
+passage — `"16. PRIMARY SEAL GAS IS TAKEN DOWNSTREAM..."` — was sitting right there as the first
+context line, and the model *still* said the content wasn't provided, consistently across 3
+attempts. Stripping the context down to just that one passage made the model answer correctly and
+cleanly every time; the difference was the presence of a second, separate chunk that vector search
+also (correctly, on its own terms) retrieves: a bare `"NOTE 16"` cross-reference fragment
+(`kind="reference"`, a different element than the note's own definition — a literal callout
+elsewhere on the drawing pointing at note 16, carrying no content of its own). The model appears
+to read multiple fragmentary mentions of "NOTE 16" as evidence the information is scattered/
+incomplete, rather than recognizing the first, fuller passage as the complete answer.
+
+**Fix:** added one clarifying rule to `_SYSTEM_PROMPT` (`src/chat/answer.py`) explicitly telling
+the model that a numbered passage like `"16. TEXT..."` is the note's full content, and a bare
+`"NOTE 16"` fragment with nothing else is a cross-reference, not content, to be ignored when a
+fuller passage with the same number is present. Verified directly: 3/3 consistent correct answers
+against the exact real (noisy) context that previously refused 3/3, with no retrieval or indexing
+changes at all.
+
+### Measured before/after (real, live, Groq/llama-3.3-70b-versatile — not simulated)
+
+Three complete live full-suite runs were captured while iterating (bugs 1–3 fixed, prompt fix
+added after); a fourth full run to re-validate bug 4 in the complete suite hit Groq's free-tier
+**daily** token quota (100k TPD, exhausted by the day's testing) and correctly fail-fast'ed rather
+than hang — see `src/chat/llm.py`'s rate-limit handling. Bug 4's fix is verified directly (above,
+3/3) rather than via a fourth full scorecard; the committed `eval/scorecard.json` reflects bugs
+1–3 fixed (the last complete run) and predates bug 4's fix. A full re-run once the quota resets is
+straightforward (`make eval`) but not required to trust the fix, given the isolated reproduction.
+
+| Metric | Before | After (bugs 1–3) |
+|---|---|---|
+| Delta F1 (aggregate) | 0.0248 | 0.0327 |
+| Delta precision (aggregate) | 0.0126 | 0.0167 |
+| Chat avg correctness | 3.40 | 3.93 |
+| Chat avg groundedness | 4.60 | 4.73 |
+| Chat over-refusal rate | 0.5455 (6/11) | 0.3636 (4/11) |
+| Retrieval recall@k / MRR | 0.3636 | 0.4545 |
+
+The aggregate delta F1 barely moves despite Pair 1 individually going from 0.04 to 0.71 F1,
+because Pair 2's still-unfixed OCR noise (819 false positives) dominates the aggregate sum — an
+honest, visible illustration of why per-pair breakdowns matter more than a single blended number.
+
+### Judge validation, expanded from n=5 to n=15
+
+The original judge/human agreement check (Phase 10) hand-scored 5 of 15 QA-pair1 items — legally
+a "held-out validation set," but a thin statistical basis for the claim "the judge is trustworthy"
+(100% agreement at n=5 has enormous variance). Since the real live scorecard now contains the
+actual model output for all 15 items (not just the 5 originally hand-checked), every item was
+independently re-read against its expected answer/citations from `eval/datasets/qa_pair1.json`
+and hand-scored the same way as the original 5 (`eval/datasets/human_labels_pair1.json`, all 15
+`held_out: true` now). Result: **15/15 exact agreement on both correctness and groundedness, mean
+absolute difference 0.0** — the same clean numbers as before, now on the full dataset rather than
+a third of it. One item (QA-08, note 19's alarm) is flagged in its own hand-label notes as a
+genuine borderline call (the model's answer addresses the literal question asked but omits a
+related detail from the same note) rather than papered over as an unambiguous agreement.
+
+### Other real gaps found and fixed
+
+- **Dashboard DWG upload could never trigger DWG→DXF conversion.** `_UPLOAD_EXTENSION` saved every
+  `format="dwg"` upload as `doc_a.dxf` regardless of what was actually uploaded, so
+  `DwgAdapter.ingest()`'s `path.suffix.lower() == ".dwg"` check (which gates the ODA File
+  Converter call) could never see a `.dwg` suffix through the dashboard, even with a real `.dwg`
+  file and a working converter — it would always be hard-parsed as DXF and fail with a confusing
+  low-level `ezdxf` error. Fixed (`src/dashboard/app.py::_upload_suffix`) by reading the suffix off
+  the *client-supplied filename* (safe here specifically because it only selects between two
+  hardcoded extensions, never becomes a path component — the existing "never trust a display
+  string as a path" rule for pids is unaffected).
+- **No dashboard upload size limit.** `UploadFile.file.read()` with no argument reads the entire
+  body into memory in one shot before writing it to disk — unbounded for a server with no auth in
+  front of it. Fixed with a configurable `DASHBOARD_MAX_UPLOAD_MB` (default 50) enforced via a
+  bounded `.read(limit+1)` rather than reading the whole file to check its size after the fact.
+- **The low-alignment-rate warning could go silent exactly when it's needed most.** It fires on
+  low *exact-key match rate*, but only once both sides already produce ≥20 keyed elements — a
+  document whose tag-numbering convention isn't recognized at all by `src/ingest/pdf_native.py`'s
+  classifiers (openly documented there as grounded in one client's convention, not a general P&ID
+  standard) produces very few keyed elements on *either* side, so the existing warning never gets
+  enough signal to fire. Added a complementary `low_keyed_fraction_threshold` warning
+  (`src/delta/engine.py`) that fires when the *fraction* of elements classified as any recognized
+  tag/instrument/valve/line-number type is implausibly low, independent of match rate.
+- Added a regression test confirming a genuinely corrupt (empty/garbage-bytes) upload with the
+  *correct* declared format fails cleanly (400, not a crash) — the existing test only covered a
+  wrong-format upload, a different failure mode.
+
+### What's still honestly broken or unverified (not silently hidden)
+
+- **Pair 2 (scanned/OCR) delta precision is still bad** (819 false positives, precision 0.0049) —
+  a different root cause than bug 1 above (OCR text-extraction variance producing many near-but-
+  not-exact text differences on content that didn't really change), not addressed by this pass.
+  This is real, measured, and unresolved; a genuine follow-up item, not a claim of completeness.
+- **DWG-binary support (as opposed to DXF) has never been exercised end-to-end.** No real `.dwg`
+  file exists anywhere in this repo (Pair 3 is hand-authored DXF), and the ODA File Converter
+  isn't installed in this development environment, so `convert_dwg_to_dxf`'s actual subprocess
+  invocation has only ever been unit-tested against a mocked converter. The code path is
+  reasonable (documented CLI args, output-file verification, a clear error when the tool is
+  missing) but unverified against a real conversion — exactly the risk plan §13 anticipated and
+  pre-authorized falling back on, not a hidden gap.
+- **Classification is genuinely convention-specific**, not a general P&ID/engineering-drawing
+  parser — a document using a different tag-numbering scheme than the two real sample P&IDs this
+  was built against will mostly fall through to generic `text_block`, and while the new low-keyed-
+  fraction warning now surfaces this at runtime, the underlying limitation (recognizing an
+  arbitrary drafting standard) is out of scope for this engagement, not something this pass
+  attempted to solve.

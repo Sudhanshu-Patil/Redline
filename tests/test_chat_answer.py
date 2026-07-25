@@ -4,6 +4,8 @@ itself is tested against fakes for retrieval, reranking, and the LLM, so no
 network call and no real model load happens in this suite.
 """
 
+from typing import Literal
+
 from src.chat.answer import (
     _NO_GROUNDING_TEXT,
     Citation,
@@ -14,10 +16,16 @@ from src.chat.answer import (
 from src.chat.index import RetrievedChunk
 
 
-def chunk(element_id: str, text: str, pid: str = "pid", page: int = 0) -> RetrievedChunk:
+def chunk(
+    element_id: str,
+    text: str,
+    pid: str = "pid",
+    page: int = 0,
+    source: Literal["exact", "vector"] = "vector",
+) -> RetrievedChunk:
     return RetrievedChunk(
         element_id=element_id, pid=pid, revision_label="Rev A", type="note",
-        page=page, text=text, score=0.9, source="vector",
+        page=page, text=text, score=0.9, source=source,
     )  # fmt: skip
 
 
@@ -184,6 +192,48 @@ class TestAnswerQuestionGroundedAnswer:
         index = FakeIndex([chunk("id1", "text")])
         answer_question(index, "q", llm=FakeLLM("NOT_GROUNDED: n/a"), reranker=FakeReranker())
         assert index.search_calls == [("q", 7)]
+
+
+class TestExactMatchesBypassReranking:
+    """Real bug found via a live eval run (2026-07-25): after fixing
+    chat/index.py's note-number exact lookup, several "what does note N
+    say" questions STILL refused, because the now-correctly-retrieved exact
+    match could still be reranked out of the top rerank_top_k slots -- the
+    same crowding-out mechanism chat/index.py's own docstring documents for
+    the HH:250/PIT-9062 case. An exact match is a deterministic, certain
+    hit (the query named a literal tag/note number); it must never lose
+    that competition to the cross-encoder's approximate judgment."""
+
+    def test_exact_match_survives_even_when_reranker_would_score_it_last(self, monkeypatch):
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "rerank_top_k", 2)
+        exact = chunk("exact1", "the exact note content", source="exact")
+        vectors = [chunk("v1", "vector passage 1"), chunk("v2", "vector passage 2")]
+        index = FakeIndex([exact, *vectors])
+        llm = FakeLLM("answer [exact1].")
+        # The reranker is only ever asked to score the vector passages --
+        # if it saw "the exact note content" it would need to be in this
+        # list or FakeReranker.score would raise ValueError.
+        reranker = FakeReranker(order=["vector passage 1", "vector passage 2"])
+
+        result = answer_question(index, "what does note say", llm=llm, reranker=reranker)
+
+        _, user_prompt, _, _ = llm.calls[0]
+        assert "the exact note content" in user_prompt
+        assert result.reranked_count == 2  # 1 exact + (rerank_top_k(2) - exact(1)) vector
+
+    def test_exact_matches_exceeding_the_rerank_budget_are_all_kept(self, monkeypatch):
+        from src.config import settings
+
+        monkeypatch.setattr(settings, "rerank_top_k", 1)
+        exacts = [chunk(f"exact{i}", f"exact note {i}", source="exact") for i in range(3)]
+        index = FakeIndex(exacts)
+        llm = FakeLLM("answer.")
+
+        result = answer_question(index, "q", llm=llm, reranker=FakeReranker())
+
+        assert result.reranked_count == 3
 
 
 class TestChatAnswerQueryEcho:

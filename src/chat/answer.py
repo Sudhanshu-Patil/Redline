@@ -36,10 +36,16 @@ Rules:
 knowledge about engineering, P&IDs, or the specific equipment.
 2. Cite the source of every factual claim by including its bracketed id inline, e.g. \
 "The setpoint is 260 bar (g) [26-KA-901_B:pdf_native:00042]."
-3. If the provided context does not contain enough information to answer the question, \
+3. A passage like "16. SOME TEXT HERE." is the full content of note 16 -- treat the \
+leading number as the note's identifier and answer directly from that text. A short \
+passage that is ONLY a bare reference (e.g. just the words "NOTE 16" with nothing else) \
+is a cross-reference to that note elsewhere on the drawing, not its content -- if a fuller \
+numbered passage with the same number is also present, use that one and ignore the bare \
+reference.
+4. If the provided context does not contain enough information to answer the question, \
 respond with EXACTLY: "{_NOT_GROUNDED_PREFIX} <one short sentence explaining what's \
 missing>" and nothing else. Do not guess or use outside knowledge to fill the gap.
-4. Be concise."""
+5. Be concise."""
 
 _CITATION_RE = re.compile(r"\[([^\[\]]+)\]")
 
@@ -122,8 +128,21 @@ def answer_question(
                 reranked_count=0,
             )
 
-        reranked = rerank_chunks(
-            query, retrieved, reranker or CrossEncoderReranker(), top_k=settings.rerank_top_k
+        # Exact-source chunks are deterministic, certain matches (the query
+        # named a literal tag or note number) -- always kept, never left to
+        # compete with the cross-encoder's judgment. Found live (2026-07-25,
+        # after fixing chat/index.py's note-number lookup): several "what
+        # does note N say" questions still refused, because the now-
+        # correctly-retrieved note could still be reranked out of the
+        # rerank_top_k=5 slots sent to the LLM -- the same crowding-out
+        # mechanism already documented in chat/index.py for the HH:250/
+        # PIT-9062 case, just also reachable for exact hits, which by
+        # construction should never lose that competition.
+        exact = [c for c in retrieved if c.source == "exact"]
+        vector_only = [c for c in retrieved if c.source != "exact"]
+        remaining_budget = max(settings.rerank_top_k - len(exact), 0)
+        reranked = exact + rerank_chunks(
+            query, vector_only, reranker or CrossEncoderReranker(), top_k=remaining_budget
         )
         sp["reranked_count"] = len(reranked)
 

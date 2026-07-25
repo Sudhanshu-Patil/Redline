@@ -85,8 +85,14 @@ class QAItem(BaseModel):
     # answerable=False (deliberately unanswerable) questions.
     expected_citation_texts: list[str] = Field(default_factory=list)
     expected_answer_summary: str
-    # Marks the small subset hand-scored by a human for judge validation
-    # (BRIEF's "validate the judge" bar) -- see eval/datasets/human_labels_*.json.
+    # Marks items hand-scored by a human for judge validation (BRIEF's
+    # "validate the judge" bar) -- see eval/datasets/human_labels_*.json.
+    # Originally a 5-of-15 subset; expanded to all 15 items for pair1
+    # (2026-07-25) once a live eval run surfaced real judge output worth
+    # checking against every question, not just a sample -- there's no
+    # training/tuning step here for "held out" to protect against, so the
+    # name just marks "independently human-checked," and there's no reason
+    # not to check everything once the actual outputs already exist.
     held_out: bool = False
 
 

@@ -72,6 +72,18 @@ class Settings(BaseSettings):
     low_alignment_rate_threshold: float = 0.5
     low_alignment_min_elements: int = 20  # below this many *keyed* elements, skip the warning
 
+    # Complementary warning, distinct from low_alignment_rate_threshold
+    # above: that one fires on *mismatched* documents that both produce
+    # plenty of keyed elements (tags/instrument-loops/valves/line-numbers)
+    # but disagree; this one fires when a document produces almost none in
+    # the first place -- e.g. a P&ID from a different drafting standard
+    # whose tag-numbering convention the regex classifiers in
+    # src/ingest/pdf_native.py don't recognize at all. Real Pair 1 measures
+    # ~20% keyed; 5% is a conservative floor that only trips when
+    # classification coverage is genuinely poor, not merely below-average.
+    low_keyed_fraction_threshold: float = 0.05
+    low_keyed_fraction_min_elements: int = 20  # below this many total elements, skip the warning
+
     # OCR
     ocr_confidence_threshold: float = 60.0  # tesseract confidence is 0-100
     ocr_dpi: int = 300
@@ -101,6 +113,10 @@ class Settings(BaseSettings):
     metrics_port: int = 8000
     dashboard_host: str = "127.0.0.1"
     dashboard_port: int = 8001
+    # Per-file cap on dashboard uploads. UploadFile.file.read() reads the
+    # whole body into memory before writing it to disk, so an unbounded
+    # upload is a real memory-exhaustion risk, not just a slow request.
+    dashboard_max_upload_mb: int = 50
 
 
 settings = Settings()

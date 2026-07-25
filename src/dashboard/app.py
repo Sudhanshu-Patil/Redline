@@ -50,8 +50,41 @@ _SAMPLE_PAIR_IDS = ["pair1", "pair2", "pair3", "pair4"]
 _UPLOAD_EXTENSION: dict[AdapterFormat, str] = {
     "pdf_native": ".pdf",
     "pdf_scanned": ".pdf",
-    "dwg": ".dxf",
 }
+
+
+def _upload_suffix(fmt: AdapterFormat, client_filename: str) -> str:
+    """The saved filename is always server-controlled (never the raw
+    client-supplied name -- see module docstring), but for "dwg" the two
+    possible real formats need different handling downstream: DwgAdapter
+    auto-converts via the ODA File Converter only when the path's suffix is
+    literally ".dwg" (see src/ingest/dwg.py::ingest). A fixed ".dxf" here
+    (the original behavior) meant that check could never fire through the
+    dashboard, even with a real .dwg upload and a working converter -- the
+    file would always be hard-parsed as DXF and fail with a confusing
+    ezdxf error instead of converting. Reading the suffix off the client
+    filename is safe here specifically because it only selects between two
+    hardcoded extensions, never becomes a path component itself.
+    """
+    if fmt == "dwg":
+        return ".dwg" if client_filename.lower().endswith(".dwg") else ".dxf"
+    return _UPLOAD_EXTENSION[fmt]
+
+
+def _read_upload_within_limit(upload: UploadFile) -> bytes:
+    """Reads at most (dashboard_max_upload_mb + 1) MB regardless of the
+    upload's real size. `.file.read()` with no argument reads the entire
+    body into memory in one shot -- an unbounded-memory risk for a server
+    with no auth in front of it. Raises ValueError (caught by the same
+    friendly-error handler as any other bad upload) if the cap is hit."""
+    limit_bytes = settings.dashboard_max_upload_mb * 1024 * 1024
+    data = upload.file.read(limit_bytes + 1)
+    if len(data) > limit_bytes:
+        raise ValueError(
+            f"{upload.filename} exceeds the {settings.dashboard_max_upload_mb}MB upload limit"
+        )
+    return data
+
 
 _UNSAFE_PATH_CHARS = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -133,13 +166,14 @@ def create_app() -> FastAPI:
         if missing:
             return _index_with_error(request, "Both documents are required.")
         assert doc_a_file is not None and doc_b_file is not None  # narrowed by `missing` above
+        assert doc_a_file.filename and doc_b_file.filename  # narrowed by `missing` above
         try:
             work_dir = settings.dashboard_runs_dir / "uploads" / uuid.uuid4().hex[:12]
             work_dir.mkdir(parents=True, exist_ok=True)
-            path_a = work_dir / f"doc_a{_UPLOAD_EXTENSION[format_a]}"
-            path_b = work_dir / f"doc_b{_UPLOAD_EXTENSION[format_b]}"
-            path_a.write_bytes(doc_a_file.file.read())
-            path_b.write_bytes(doc_b_file.file.read())
+            path_a = work_dir / f"doc_a{_upload_suffix(format_a, doc_a_file.filename)}"
+            path_b = work_dir / f"doc_b{_upload_suffix(format_b, doc_b_file.filename)}"
+            path_a.write_bytes(_read_upload_within_limit(doc_a_file))
+            path_b.write_bytes(_read_upload_within_limit(doc_b_file))
 
             doc_a = ingest_by_format(
                 path_a, format_a, pid=pid_a, revision_label=revision_label_a or None

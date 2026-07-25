@@ -47,6 +47,21 @@ from src.observability import tracing
 
 _TAG_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9\-/]{1,}")
 
+# "note 37" / "note number 16" / "note #8" -- deliberately separate from
+# _extract_tag_tokens: a bare note number ("37") is too short to survive that
+# filter (len >= 3), and even if it did, it would never equal a whole note's
+# full sentence text via the substring-token match exact_lookup does for
+# tags. Notes need to be matched by their note_number *attribute* instead.
+# Found live (2026-07-25): a real eval run against Pair 1's 15-question QA
+# set showed 6 of 11 answerable questions getting a false NOT_GROUNDED
+# refusal -- 5 of those 6 were exactly "what does note N say?" phrasings
+# that fell through to vector search alone and lost the reranking race
+# (see src/chat/index.py's own docstring on the similar, deliberately-NOT-
+# fixed HH:250/PIT-9062 case for why that one variance is expected; this one
+# has a clean deterministic fix since note_number is already extracted at
+# ingest time by classify_block_lines).
+_NOTE_REFERENCE_RE = re.compile(r"\bnote\s*(?:number\s*)?#?\s*(\d{1,3})\b", re.IGNORECASE)
+
 
 def _extract_tag_tokens(query: str) -> list[str]:
     """P&ID tags always carry a digit (instrument/line/valve numbers) -- this
@@ -57,6 +72,10 @@ def _extract_tag_tokens(query: str) -> list[str]:
         for tok in _TAG_TOKEN_RE.findall(query)
         if len(tok) >= 3 and any(c.isdigit() for c in tok)
     ]
+
+
+def _extract_note_numbers(query: str) -> set[str]:
+    return {m.group(1) for m in _NOTE_REFERENCE_RE.finditer(query)}
 
 
 class RetrievedChunk(BaseModel):
@@ -127,6 +146,7 @@ class ChatIndex:
                     "revision_label": doc.revision_label or "",
                     "type": el.type,
                     "page": el.bbox.page,
+                    "note_number": el.attributes.get("note_number", ""),
                 }
                 for el in eligible
             ]
@@ -139,7 +159,8 @@ class ChatIndex:
     def exact_lookup(self, query: str) -> list[RetrievedChunk]:
         with tracing.span("chat.retrieve.exact") as sp:
             tokens = {t.lower() for t in _extract_tag_tokens(query)}
-            if not tokens:
+            note_numbers = _extract_note_numbers(query)
+            if not tokens and not note_numbers:
                 sp["matched"] = 0
                 return []
             got = self._collection.get(include=["documents", "metadatas"])
@@ -149,6 +170,7 @@ class ChatIndex:
                     got["ids"], got["documents"] or [], got["metadatas"] or [], strict=True
                 )
                 if text.strip().lower() in tokens
+                or str(meta.get("note_number") or "") in note_numbers
             ]
             sp["matched"] = len(results)
             return results

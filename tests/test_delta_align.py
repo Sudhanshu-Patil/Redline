@@ -225,10 +225,30 @@ class TestEmbeddingProximityMatch:
         matched, ua, ub = embedding_proximity_match([a], [b], embedder)
         assert matched == []
 
-    def test_short_text_below_min_length_is_never_embedded(self):
-
+    def test_short_text_at_same_position_matches_via_tight_band_without_embedding(self):
+        """Real bug found via a live eval run on Pair 1 (2026-07-25): 235 of
+        237 delta false positives were single-character text_block elements
+        (kind="flag", e.g. valve position letters -- a real classified
+        category, not noise) that were genuinely unchanged between
+        revisions but always scored as a spurious add+remove, because the
+        old code excluded short text from candidate generation entirely.
+        The tight band is position-decisive and never needs an embedding
+        (see FakeEmbedder({}) below -- would KeyError if embed() were ever
+        called), so short text must still be eligible for it."""
         a = el("*", element_type="text_block", seq=1)
         b = el("*", element_type="text_block", seq=1)
+        embedder = FakeEmbedder({})
+        matched, ua, ub = embedding_proximity_match([a], [b], embedder)
+        assert len(matched) == 1
+        assert matched[0].match_score >= 0.9
+        assert ua == [] and ub == []
+
+    def test_short_text_outside_tight_band_cannot_fall_back_to_loose_match(self):
+        """Beyond the tight band, matching needs semantic similarity -- and
+        short text has no meaningful embedding (min_len not met), so it
+        correctly stays unmatched rather than guessing."""
+        a = el("*", element_type="text_block", seq=1, x0=0.10, y0=0.10, x1=0.12, y1=0.12)
+        b = el("*", element_type="text_block", seq=1, x0=0.15, y0=0.10, x1=0.17, y1=0.12)
         embedder = FakeEmbedder({})  # would KeyError if embed() were ever called
         matched, ua, ub = embedding_proximity_match([a], [b], embedder)
         assert matched == []
