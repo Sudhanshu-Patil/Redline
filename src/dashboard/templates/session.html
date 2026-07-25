@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ session.pair_label }}</h1>
+<div class="subtitle">{{ session.doc_a.pid }} ({{ session.doc_a.format }}) &rarr; {{ session.doc_b.pid }} ({{ session.doc_b.format }})</div>
+
+<div class="stat-row">
+  <div class="stat-tile"><div class="label">Added</div><div class="value">{{ stats.added }}</div></div>
+  <div class="stat-tile"><div class="label">Removed</div><div class="value">{{ stats.removed }}</div></div>
+  <div class="stat-tile"><div class="label">Modified</div><div class="value">{{ stats.modified }}</div></div>
+  <div class="stat-tile"><div class="label">Unchanged</div><div class="value">{{ stats.unchanged }}</div></div>
+  <div class="stat-tile"><div class="label">Alignment rate</div><div class="value">{{ "%.0f"|format(stats.alignment_rate * 100) }}%</div></div>
+</div>
+
+{% if session.report.warnings %}
+{% for w in session.report.warnings %}
+<div class="error-banner" style="background: var(--warning); color: #1a1a19;">&#9888; {{ w }}</div>
+{% endfor %}
+{% endif %}
+
+<div class="card">
+  <h2 style="margin-top:0">Delta report</h2>
+  <p class="muted">Full report with charts, before/after markup preview, and change tables.</p>
+  <div class="btn-row">
+    <a class="btn" href="/session/{{ session.session_id }}/report" target="_blank">Open report</a>
+    <a class="btn secondary" href="/session/{{ session.session_id }}/download/json">Download JSON</a>
+    <a class="btn secondary" href="/session/{{ session.session_id }}/download/markdown">Download Markdown</a>
+    {% if "markup_a" in session.report_paths %}
+    <a class="btn secondary" href="/session/{{ session.session_id }}/download/markup_a">Markup (A)</a>
+    <a class="btn secondary" href="/session/{{ session.session_id }}/download/markup_b">Markup (B)</a>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">Grounded chat</h2>
+  <p class="muted">Ask questions about either revision; every answer is cited or refused, never guessed.</p>
+  <div class="btn-row">
+    <a class="btn" href="/session/{{ session.session_id }}/chat">Open chat</a>
+  </div>
+</div>
+{% endblock %}

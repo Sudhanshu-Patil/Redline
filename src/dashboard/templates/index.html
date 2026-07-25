@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Submit a pair</h1>
+<div class="subtitle">Ingest two revisions of a P&amp;ID, compute the delta, and open a grounded chat over both.</div>
+
+<div class="card">
+  <h2 style="margin-top:0">Quick start: sample pairs</h2>
+  <p class="muted">Load one of the bundled sample pairs (no files needed) -- see data/samples/PROVENANCE.md for what each one exercises.</p>
+  <div class="btn-row">
+    {% for pid in sample_pair_ids %}
+    <form method="post" action="/submit/sample/{{ pid }}" style="display:inline">
+      <button type="submit" class="secondary">{{ pid }}</button>
+    </form>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="card">
+  <h2 style="margin-top:0">Upload your own pair</h2>
+  <form method="post" action="/submit" enctype="multipart/form-data">
+    <div class="row">
+      <div>
+        <label for="doc_a_file">Document A (before)</label>
+        <input type="file" id="doc_a_file" name="doc_a_file" required>
+        <label for="format_a">Format</label>
+        <select id="format_a" name="format_a">
+          <option value="pdf_native">Native PDF</option>
+          <option value="pdf_scanned">Scanned PDF (OCR)</option>
+          <option value="dwg">DWG/DXF</option>
+        </select>
+        <label for="pid_a">Document id</label>
+        <input type="text" id="pid_a" name="pid_a" placeholder="e.g. 26-KA-901_A" required>
+        <label for="revision_label_a">Revision label</label>
+        <input type="text" id="revision_label_a" name="revision_label_a" placeholder="e.g. Rev A">
+      </div>
+      <div>
+        <label for="doc_b_file">Document B (after)</label>
+        <input type="file" id="doc_b_file" name="doc_b_file" required>
+        <label for="format_b">Format</label>
+        <select id="format_b" name="format_b">
+          <option value="pdf_native">Native PDF</option>
+          <option value="pdf_scanned">Scanned PDF (OCR)</option>
+          <option value="dwg">DWG/DXF</option>
+        </select>
+        <label for="pid_b">Document id</label>
+        <input type="text" id="pid_b" name="pid_b" placeholder="e.g. 26-KA-901_B" required>
+        <label for="revision_label_b">Revision label</label>
+        <input type="text" id="revision_label_b" name="revision_label_b" placeholder="e.g. Rev B">
+      </div>
+    </div>
+    <div class="btn-row">
+      <button type="submit">Submit pair</button>
+    </div>
+  </form>
+</div>
+
+<h2>Previous sessions (this server run)</h2>
+{% if sessions %}
+<table>
+  <thead><tr><th>Pair</th><th>Added</th><th>Removed</th><th>Modified</th><th>Submitted</th><th></th></tr></thead>
+  <tbody>
+    {% for s in sessions %}
+    <tr>
+      <td>{{ s.pair_label }}</td>
+      <td>{{ s.report.stats.added }}</td>
+      <td>{{ s.report.stats.removed }}</td>
+      <td>{{ s.report.stats.modified }}</td>
+      <td class="muted">{{ s.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+      <td><a href="/session/{{ s.session_id }}">Open &rarr;</a></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No sessions yet -- submit a pair or try a sample above.</p>
+{% endif %}
+{% endblock %}

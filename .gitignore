@@ -24,6 +24,7 @@ traces/*.json
 !traces/.gitkeep
 data/samples/generated/
 chroma_db/
+dashboard_runs/
 *.db
 
 # Models cache

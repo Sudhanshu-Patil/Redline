@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Chat: {{ session.pair_label }}</h1>
+<div class="subtitle"><a href="/session/{{ session.session_id }}">&larr; back to session</a></div>
+
+<div class="chat-log">
+  {% for turn in session.chat_history %}
+  <div class="chat-turn">
+    <div class="q">{{ turn.question }}</div>
+    <div class="a{% if turn.answer.refused %} refused{% endif %}">
+      {{ turn.answer.answer_text }}
+      {% if turn.answer.citations %}
+      <div style="margin-top:8px">
+        {% for c in turn.answer.citations %}
+        <span class="citation" title="{{ c.text }}">{{ c.element_id }}</span>
+        {% endfor %}
+      </div>
+      {% endif %}
+      {% if turn.answer.invalid_citation_ids %}
+      <div class="muted" style="margin-top:6px">&#9888; model cited unrecognized id(s): {{ turn.answer.invalid_citation_ids|join(", ") }}</div>
+      {% endif %}
+    </div>
+  </div>
+  {% else %}
+  <p class="muted">No questions asked yet -- try one below.</p>
+  {% endfor %}
+</div>
+
+<form method="post" action="/session/{{ session.session_id }}/chat">
+  <label for="question">Ask a question</label>
+  <input type="text" id="question" name="question" placeholder="e.g. What is the set pressure of PSV-9066A?" autofocus>
+  <div class="btn-row">
+    <button type="submit">Ask</button>
+  </div>
+</form>
+{% endblock %}

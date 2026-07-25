@@ -35,4 +35,4 @@ metrics:
 	uv run python -m src.observability.metrics_server
 
 dashboard:
-	@echo "TODO: wire up in Phase 11 (uvicorn src.dashboard.app:app)"
+	uv run python -m src.dashboard.app

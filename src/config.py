@@ -93,11 +93,14 @@ class Settings(BaseSettings):
     data_dir: Path = Path("./data")
     traces_dir: Path = Path("./traces")
     chroma_persist_dir: Path = Path("./chroma_db")
+    dashboard_runs_dir: Path = Path("./dashboard_runs")
 
     # Observability
     log_level: str = "INFO"
     metrics_host: str = "127.0.0.1"
     metrics_port: int = 8000
+    dashboard_host: str = "127.0.0.1"
+    dashboard_port: int = 8001
 
 
 settings = Settings()

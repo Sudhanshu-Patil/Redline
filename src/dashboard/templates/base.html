@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Document Delta &amp; Grounded Chat{% endblock %}</title>
+<style>
+  :root, body {
+    color-scheme: light;
+    --surface: #fcfcfb; --page: #f9f9f7;
+    --ink-primary: #0b0b0b; --ink-secondary: #52514e; --ink-muted: #898781;
+    --gridline: #e1e0d9; --border: rgba(11,11,11,0.10);
+    --good: #0ca30c; --warning: #fab219; --critical: #d03b3b; --accent: #2f6fed;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root, body {
+      color-scheme: dark;
+      --surface: #1a1a19; --page: #0d0d0d;
+      --ink-primary: #ffffff; --ink-secondary: #c3c2b7; --ink-muted: #898781;
+      --gridline: #2c2c2a; --border: rgba(255,255,255,0.10); --accent: #5b8dfd;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink-primary);
+         font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  a { color: var(--accent); }
+  nav { display: flex; align-items: center; gap: 20px; padding: 14px 24px;
+        border-bottom: 1px solid var(--border); background: var(--surface); }
+  nav .brand { font-weight: 600; margin-right: auto; }
+  nav a { text-decoration: none; color: var(--ink-secondary); font-size: 14px; }
+  nav a:hover { color: var(--accent); }
+  .page-root { max-width: 900px; margin: 0 auto; padding: 24px 24px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 28px 0 12px; }
+  .subtitle { color: var(--ink-secondary); font-size: 13px; margin-bottom: 20px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+          padding: 18px; margin: 12px 0; }
+  label { display: block; font-size: 12px; color: var(--ink-secondary); margin: 10px 0 4px; }
+  input[type="text"], input[type="file"], select {
+    width: 100%; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--page); color: var(--ink-primary); font-size: 13px;
+  }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .row > div { flex: 1 1 260px; }
+  button, .btn { display: inline-block; padding: 8px 16px; border-radius: 6px; border: none;
+         background: var(--accent); color: #ffffff; font-size: 13px; font-weight: 600;
+         cursor: pointer; text-decoration: none; }
+  button.secondary, .btn.secondary { background: var(--surface); color: var(--ink-primary);
+         border: 1px solid var(--border); }
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+  .error-banner { background: var(--critical); color: #ffffff; padding: 10px 14px;
+                  border-radius: 6px; font-size: 13px; margin: 16px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin: 8px 0; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--gridline); }
+  th { color: var(--ink-secondary); font-weight: 600; font-size: 12px; }
+  .stat-row { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
+  .stat-tile { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+               padding: 10px 14px; min-width: 100px; }
+  .stat-tile .label { font-size: 11px; color: var(--ink-secondary); }
+  .stat-tile .value { font-size: 20px; font-weight: 600; margin-top: 2px; }
+  .muted { color: var(--ink-muted); font-size: 12px; }
+  .chat-log { display: flex; flex-direction: column; gap: 12px; margin: 16px 0; }
+  .chat-turn .q { font-weight: 600; font-size: 14px; }
+  .chat-turn .a { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+                  padding: 10px 14px; margin-top: 6px; font-size: 13px; white-space: pre-wrap; }
+  .chat-turn .a.refused { border-color: var(--warning); }
+  .citation { display: inline-block; font-family: ui-monospace, "SF Mono", Consolas, monospace;
+              font-size: 11px; background: var(--page); border: 1px solid var(--border);
+              border-radius: 4px; padding: 1px 6px; margin: 2px 4px 0 0; }
+</style>
+</head>
+<body>
+<nav>
+  <span class="brand">Document Delta &amp; Grounded Chat</span>
+  <a href="/">Home</a>
+  <a href="/metrics/">Metrics</a>
+</nav>
+<div class="page-root">
+{% if error %}<div class="error-banner">{{ error }}</div>{% endif %}
+{% block content %}{% endblock %}
+</div>
+</body>
+</html>
