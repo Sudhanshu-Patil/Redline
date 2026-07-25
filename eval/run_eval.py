@@ -213,26 +213,63 @@ class Scorecard(BaseModel):
     cost_latency_report_path: str
 
 
-def run_full_eval(out_path: Path) -> Scorecard:
-    with tracing.span("eval.run_full"):
+def _display_path(path: Path) -> str:
+    """Repo-relative when possible (the common case: --out under the repo,
+    e.g. eval/scorecard.json), falling back to the absolute path rather
+    than raising -- Path.relative_to() only accepts a genuine subpath, and
+    a caller passing --out somewhere outside the repo (e.g. a scratch
+    directory) is unusual but not an error worth crashing the whole run
+    over just to compute a display string.
+    """
+    resolved = path.resolve()
+    try:
+        return str(resolved.relative_to(REPO_ROOT))
+    except ValueError:
+        return str(resolved)
+
+
+_EMPTY_CHAT_SUMMARY = ChatEvalSummary(
+    items=[],
+    avg_correctness=None,
+    avg_groundedness=None,
+    refusal_accuracy=1.0,
+    over_refusal_rate=0.0,
+    judge_agreement=None,
+)
+_EMPTY_RETRIEVAL_RESULT = RetrievalEvalResult(
+    queries=[], recall_at_k=None, mean_reciprocal_rank=None
+)
+
+
+def run_full_eval(out_path: Path, delta_only: bool = False) -> Scorecard:
+    """`delta_only` skips the chat/judge/retrieval suite (which needs a
+    live LLM) -- used by CI, where a network dependency and per-run LLM
+    cost/flakiness aren't acceptable for a check that runs on every push.
+    The delta suite alone is fully deterministic (see BRIEF rule 2) and
+    still exercises a real regression surface: ground truth vs. real
+    engine output across 4 labeled pairs. The full suite (this project's
+    real "validate the judge" + retrieval-quality story) stays a deliberate
+    manual/on-demand run, documented in the CI workflow rather than gated
+    behind a secret-dependent scheduled job that wasn't asked for.
+    """
+    with tracing.span("eval.run_full", delta_only=delta_only):
         delta_summary = run_delta_eval()
-        qa_items = load_qa_dataset(_CHAT_QA_PATH).items
-        chat_summary, retrieval_result = run_chat_eval(qa_items)
+        if delta_only:
+            chat_summary, retrieval_result = _EMPTY_CHAT_SUMMARY, _EMPTY_RETRIEVAL_RESULT
+        else:
+            qa_items = load_qa_dataset(_CHAT_QA_PATH).items
+            chat_summary, retrieval_result = run_chat_eval(qa_items)
 
         cost_latency_path = out_path.parent / "cost_latency_report.md"
         cost_latency_path.parent.mkdir(parents=True, exist_ok=True)
         cost_latency_path.write_text(generate_cost_latency_report(), encoding="utf-8")
 
-        # .resolve() first: out_path (and therefore cost_latency_path) may be
-        # relative (e.g. the Makefile passes --out eval/scorecard.json), and
-        # Path.relative_to() refuses to compare a relative path against
-        # REPO_ROOT (absolute) even when one genuinely is inside the other.
         scorecard = Scorecard(
             generated_at=datetime.now(UTC),
             delta=delta_summary,
             chat=chat_summary,
             retrieval=retrieval_result,
-            cost_latency_report_path=str(cost_latency_path.resolve().relative_to(REPO_ROOT)),
+            cost_latency_report_path=_display_path(cost_latency_path),
         )
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(scorecard.model_dump_json(indent=2), encoding="utf-8")
@@ -261,28 +298,33 @@ def print_scorecard(scorecard: Scorecard) -> None:
             f"P={a.precision:.4f} R={a.recall:.4f} F1={a.f1:.4f}"
         )
 
-    print("\n=== Chat groundedness (LLM judge) ===")
-    print(f"  avg correctness (1-5): {scorecard.chat.avg_correctness}")
-    print(f"  avg groundedness (1-5): {scorecard.chat.avg_groundedness}")
-    refusal_acc = scorecard.chat.refusal_accuracy
-    over_refusal = scorecard.chat.over_refusal_rate
-    print(f"  refusal accuracy (unanswerable correctly refused): {refusal_acc:.1%}")
-    print(f"  over-refusal rate (answerable incorrectly refused): {over_refusal:.1%}")
-    ja = scorecard.chat.judge_agreement
-    if ja:
-        print(
-            f"  judge/human agreement (n={ja.n}): "
-            f"exact correctness={ja.exact_agreement_correctness:.1%}, "
-            f"exact groundedness={ja.exact_agreement_groundedness:.1%}, "
-            f"MAD correctness={ja.mean_abs_diff_correctness}, "
-            f"MAD groundedness={ja.mean_abs_diff_groundedness}"
-        )
+    ran_chat_suite = scorecard.chat.items or scorecard.retrieval.queries
+    if not ran_chat_suite:
+        print("\n=== Chat groundedness / Retrieval quality ===")
+        print("  skipped (--delta-only: no live LLM calls made)")
     else:
-        print("  judge/human agreement: no held-out human labels found")
+        print("\n=== Chat groundedness (LLM judge) ===")
+        print(f"  avg correctness (1-5): {scorecard.chat.avg_correctness}")
+        print(f"  avg groundedness (1-5): {scorecard.chat.avg_groundedness}")
+        refusal_acc = scorecard.chat.refusal_accuracy
+        over_refusal = scorecard.chat.over_refusal_rate
+        print(f"  refusal accuracy (unanswerable correctly refused): {refusal_acc:.1%}")
+        print(f"  over-refusal rate (answerable incorrectly refused): {over_refusal:.1%}")
+        ja = scorecard.chat.judge_agreement
+        if ja:
+            print(
+                f"  judge/human agreement (n={ja.n}): "
+                f"exact correctness={ja.exact_agreement_correctness:.1%}, "
+                f"exact groundedness={ja.exact_agreement_groundedness:.1%}, "
+                f"MAD correctness={ja.mean_abs_diff_correctness}, "
+                f"MAD groundedness={ja.mean_abs_diff_groundedness}"
+            )
+        else:
+            print("  judge/human agreement: no held-out human labels found")
 
-    print("\n=== Retrieval quality ===")
-    print(f"  recall@k: {scorecard.retrieval.recall_at_k}")
-    print(f"  MRR: {scorecard.retrieval.mean_reciprocal_rank}")
+        print("\n=== Retrieval quality ===")
+        print(f"  recall@k: {scorecard.retrieval.recall_at_k}")
+        print(f"  MRR: {scorecard.retrieval.mean_reciprocal_rank}")
 
     print(f"\nCost/latency analysis: {scorecard.cost_latency_report_path}")
 
@@ -292,8 +334,13 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Run the full eval harness and write a scorecard.")
     parser.add_argument("--out", type=Path, default=REPO_ROOT / "eval" / "scorecard.json")
+    parser.add_argument(
+        "--delta-only",
+        action="store_true",
+        help="skip the chat/judge/retrieval suite (no live LLM call) -- for CI",
+    )
     args = parser.parse_args()
 
-    result_scorecard = run_full_eval(args.out)
+    result_scorecard = run_full_eval(args.out, delta_only=args.delta_only)
     print_scorecard(result_scorecard)
     print(f"\nwrote {args.out}")

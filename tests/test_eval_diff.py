@@ -3,7 +3,7 @@ Scorecards -- no real eval run needed."""
 
 from datetime import UTC, datetime
 
-from eval.eval_diff import _diff_metric, diff_scorecards, print_diff
+from eval.eval_diff import _diff_metric, diff_scorecards, load_scorecard, print_diff
 from eval.metrics import PRF1, PairDeltaEval
 from eval.retrieval_eval import RetrievalEvalResult
 from eval.run_eval import ChatEvalSummary, DeltaEvalSummary, Scorecard
@@ -93,3 +93,33 @@ class TestDiffScorecards:
         # must not crash; delta-F1 row present but non-comparable
         f1_row = next(d for d in diffs if d.label == "delta F1 (aggregate)")
         assert f1_row.regressed is False
+
+
+class TestPrintDiff:
+    def test_improved_metric_is_labeled_improved_not_regressed(self, capsys):
+        old = scorecard(f1=0.5)
+        new = scorecard(f1=0.8)
+        diffs = diff_scorecards(old, new)
+        assert print_diff(diffs) is False
+        assert "improved" in capsys.readouterr().out
+
+    def test_missing_metric_prints_na_and_is_not_a_regression(self, capsys):
+        old = scorecard()
+        old.delta.aggregate = None
+        new = scorecard()
+        diffs = diff_scorecards(old, new)
+        assert print_diff(diffs) is False
+        assert "N/A (missing in one run)" in capsys.readouterr().out
+
+
+class TestLoadScorecard:
+    def test_round_trips_a_written_scorecard(self, tmp_path):
+        original = scorecard(f1=0.42)
+        path = tmp_path / "scorecard.json"
+        path.write_text(original.model_dump_json(), encoding="utf-8")
+
+        loaded = load_scorecard(path)
+
+        assert loaded.delta.aggregate is not None
+        assert loaded.delta.aggregate.f1 == 0.42
+        assert loaded.cost_latency_report_path == original.cost_latency_report_path

@@ -52,8 +52,3 @@ def _configure() -> None:
 def get_logger(name: str) -> logging.Logger:
     _configure()
     return logging.getLogger(name)
-
-
-def log_fields(logger: logging.Logger, level: int, message: str, **fields: Any) -> None:
-    """Log with extra structured fields, e.g. log_fields(log, logging.INFO, "done", pid=pid)."""
-    logger.log(level, message, extra={"extra_fields": fields})

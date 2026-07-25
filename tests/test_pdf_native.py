@@ -7,6 +7,19 @@ def L(text: str, bbox=B):
     return (text, bbox)
 
 
+def test_element_draft_is_not_equal_to_a_non_element_draft():
+    # __eq__ must return NotImplemented (not raise/crash) for a type
+    # mismatch, the standard Python protocol for "let the other side try".
+    draft = ElementDraft("note", "1. TEXT", B)
+    assert draft != "1. TEXT"
+    assert draft != 5
+
+
+def test_element_draft_repr_includes_type_and_text():
+    draft = ElementDraft("note", "1. TEXT", B)
+    assert repr(draft) == "ElementDraft('note', '1. TEXT', attributes={})"
+
+
 def test_note_single_line_body():
     lines = [L("1."), L("26-PDI-9054 HH INITIATE PRESSURIZED COMPRESSOR STOP.")]
     result = classify_block_lines(lines)

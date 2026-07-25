@@ -123,24 +123,36 @@ def _greedy_assign(
 def exact_key_match(
     a_elements: list[Element], b_elements: list[Element]
 ) -> tuple[list[MatchedPair], list[Element], list[Element]]:
+    """Matching is scoped per-page (element_key + bbox.page as the group
+    key): every sample pair through Pair 4 was single-page, so this was
+    never exercised until Pair 5's multi-page stress set -- caught for
+    real there. Without the page in the key, two same-text elements on
+    different pages (e.g. the same tag repeated per-sheet) both have
+    identical *normalized* (page-relative) bbox distance to a same-text
+    candidate on either page, so the greedy assignment's id-string
+    tie-break silently produces a cross-page match instead of the correct
+    same-page one -- confirmed with a 2-page repro where a genuinely
+    unmatched page-1 tag was reported "removed" while the actually-removed
+    page-0 tag was reported as unchanged.
+    """
     with tracing.span("delta.align.exact_key_match") as sp:
-        a_by_key: dict[str, list[Element]] = {}
+        a_by_key: dict[tuple[str, int], list[Element]] = {}
         for el in a_elements:
             key = element_key(el)
             if key is not None:
-                a_by_key.setdefault(key, []).append(el)
-        b_by_key: dict[str, list[Element]] = {}
+                a_by_key.setdefault((key, el.bbox.page), []).append(el)
+        b_by_key: dict[tuple[str, int], list[Element]] = {}
         for el in b_elements:
             key = element_key(el)
             if key is not None:
-                b_by_key.setdefault(key, []).append(el)
+                b_by_key.setdefault((key, el.bbox.page), []).append(el)
 
         matched: list[MatchedPair] = []
         matched_a_ids: set[str] = set()
         matched_b_ids: set[str] = set()
-        for key in sorted(a_by_key.keys() & b_by_key.keys()):
-            a_group = a_by_key[key]
-            b_group = b_by_key[key]
+        for group_key in sorted(a_by_key.keys() & b_by_key.keys()):
+            a_group = a_by_key[group_key]
+            b_group = b_by_key[group_key]
             candidates = [
                 (1.0 - _center_distance(a, b), a, b, _center_distance(a, b))
                 for a in a_group
@@ -169,17 +181,22 @@ def geometry_match(
         a_geo = [el for el in a_elements if el.type == "geometry"]
         b_geo = [el for el in b_elements if el.type == "geometry"]
 
-        def coarse_key(el: Element) -> tuple[str, str, str]:
+        def coarse_key(el: Element) -> tuple[str, str, str, int]:
+            # Page is part of the key for the same reason exact_key_match
+            # scopes by page (see its docstring): without it, the same
+            # bare layer/entity_type/block_name combination repeated across
+            # pages is indistinguishable by normalized bbox distance alone.
             return (
                 el.attributes.get("layer", ""),
                 el.attributes.get("entity_type", ""),
                 el.attributes.get("block_name", ""),
+                el.bbox.page,
             )
 
-        a_by_key: dict[tuple[str, str, str], list[Element]] = {}
+        a_by_key: dict[tuple[str, str, str, int], list[Element]] = {}
         for el in a_geo:
             a_by_key.setdefault(coarse_key(el), []).append(el)
-        b_by_key: dict[tuple[str, str, str], list[Element]] = {}
+        b_by_key: dict[tuple[str, str, str, int], list[Element]] = {}
         for el in b_geo:
             b_by_key.setdefault(coarse_key(el), []).append(el)
 
@@ -187,7 +204,7 @@ def geometry_match(
         matched_a_ids: set[str] = set()
         matched_b_ids: set[str] = set()
         for key in sorted(a_by_key.keys() & b_by_key.keys()):
-            _layer, _entity_type, block_name = key
+            _layer, _entity_type, block_name, _page = key
             # A named block reference (INSERT) has strong identity beyond
             # position, so it's reasonable to let it move a lot and still be
             # "the same instance" (the generous configured tolerance). A bare
@@ -232,7 +249,7 @@ def geometry_match(
 class Embedder(Protocol):
     def embed(self, texts: list[str]) -> np.ndarray:
         """Return one L2-normalized embedding vector per input text, same order."""
-        ...
+        ...  # pragma: no cover
 
 
 class SentenceTransformerEmbedder:
@@ -290,6 +307,16 @@ def embedding_proximity_match(
                     # purely by layout coincidence. Real edits never change
                     # an element's classified type, so this costs nothing on
                     # genuine revisions while rejecting cross-type noise.
+                    continue
+                if a.bbox.page != b.bbox.page:
+                    # Same reasoning as exact_key_match/geometry_match's page
+                    # scoping (see exact_key_match's docstring): normalized
+                    # bbox distance is page-relative, so a proximity match
+                    # here is meaningless across pages -- a multi-page
+                    # document with the same layout repeated per sheet would
+                    # otherwise "proximity-match" unrelated elements on
+                    # different pages that merely sit at the same fractional
+                    # position.
                     continue
                 dist = _center_distance(a, b)
                 if dist <= tight:

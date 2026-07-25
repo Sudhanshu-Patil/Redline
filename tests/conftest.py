@@ -42,7 +42,7 @@ _id_counter = itertools.count()
 
 def make_positioned_element(
     text: str, element_type: str = "tag", seq: int = 0, x0: float = 0.1, y0: float = 0.1,
-    x1: float = 0.2, y1: float = 0.2, conf: float = 1.0, **attrs: str,
+    x1: float = 0.2, y1: float = 0.2, conf: float = 1.0, page: int = 0, **attrs: str,
 ) -> Element:  # fmt: skip
     """Element with a bbox given directly in normalized-ish page coordinates
     (page_width=page_height=1, so raw == normalized) -- used by delta engine
@@ -52,13 +52,17 @@ def make_positioned_element(
     generation -- a global counter guarantees every element gets a unique id
     regardless of which "side" (A or B) it's built for, so accidental id
     collisions can never mask a real matching bug.
+
+    `page` defaults to 0 so every pre-existing call site is unaffected;
+    pass it explicitly to build multi-page matching test cases (see
+    TestPageScoping in test_delta_align.py).
     """
     del seq
     return Element(
         id=make_element_id("test", "test", next(_id_counter)),
         type=element_type,  # type: ignore[arg-type]
         text=text,
-        bbox=BBox(page=0, x0=x0, y0=y0, x1=x1, y1=y1, page_width=1.0, page_height=1.0),
+        bbox=BBox(page=page, x0=x0, y0=y0, x1=x1, y1=y1, page_width=1.0, page_height=1.0),
         attributes=attrs,
         source_adapter="test",
         extraction_confidence=conf,

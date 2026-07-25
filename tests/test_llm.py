@@ -4,6 +4,8 @@ Every test pins settings.llm_provider explicitly so results don't depend on
 whatever a local .env selects.
 """
 
+import anthropic
+import openai
 import pytest
 
 from src.chat.llm import LLMClient, LLMNotConfiguredError, estimate_cost_usd
@@ -57,6 +59,28 @@ def test_is_configured_true_with_key(monkeypatch, provider, key_field):
     monkeypatch.setattr(settings, "llm_api_key", "")
     monkeypatch.setattr(settings, key_field, "sk-test-not-real")
     assert LLMClient().is_configured is True
+
+
+class TestClientCaching:
+    """Every other test injects a fake directly into ._client/._oai_client,
+    bypassing the real lazy-construction line entirely. These two confirm
+    _get_client()/_get_oai_client() actually build a real SDK client (no
+    network call happens at construction time, only at request time) and
+    cache it across calls rather than reconnecting each time."""
+
+    def test_get_client_constructs_and_caches_anthropic_client(self, monkeypatch):
+        monkeypatch.setattr(settings, "anthropic_api_key", "sk-test-not-real")
+        client = LLMClient()
+        first = client._get_client()
+        assert isinstance(first, anthropic.Anthropic)
+        assert client._get_client() is first
+
+    def test_get_oai_client_constructs_and_caches_client(self, monkeypatch):
+        monkeypatch.setattr(settings, "llm_api_key", "gsk-test-not-real")
+        client = LLMClient()
+        first = client._get_oai_client()
+        assert isinstance(first, openai.OpenAI)
+        assert client._get_oai_client() is first
 
 
 # --- anthropic backend contract ---
@@ -346,6 +370,28 @@ class TestRateLimitWait:
 
         with pytest.raises(openai_mod.RateLimitError):
             llm_mod._with_rate_limit_wait(quota_exhausted)
+        assert called["sleep"] is False
+
+    def test_no_wait_hint_and_exhausted_budget_raises_without_sleeping(self, monkeypatch):
+        """A 429 body with no parseable 'try again in ...' hint can't take
+        the exceeds-budget fail-fast path (nothing to compare to the
+        budget), so it falls through to the wait computation -- which must
+        itself refuse to sleep once the budget is already exhausted."""
+        import openai as openai_mod
+
+        from src.chat import llm as llm_mod
+
+        called = {"sleep": False}
+        monkeypatch.setattr(llm_mod.time, "sleep", lambda s: called.update(sleep=True))
+        monkeypatch.setattr(settings, "llm_rate_limit_max_wait_seconds", 0.0)
+
+        def limited_no_hint():
+            raise openai_mod.RateLimitError(
+                "Rate limit reached.", response=_fake_httpx_response(), body=None
+            )
+
+        with pytest.raises(openai_mod.RateLimitError):
+            llm_mod._with_rate_limit_wait(limited_no_hint)
         assert called["sleep"] is False
 
     def test_wait_exactly_at_budget_still_waits(self, monkeypatch):

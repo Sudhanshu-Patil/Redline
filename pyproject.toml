@@ -51,6 +51,19 @@ no_implicit_optional = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+# Every ingest adapter and eval/ script exposes a `python -m ...` CLI via a
+# __main__ block (13 files) -- these are live-verified by hand (see
+# PROVENANCE.md, DEMO.md) rather than unit-tested, the same convention as
+# excluding abstract-method stubs. This is scoped to that one line pattern
+# only; it does not touch genuinely undertested logic (e.g. src/ingest/dwg.py's
+# ODA-converter path, which needs the real external tool and is deliberately
+# left as a measured, documented gap rather than excluded).
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

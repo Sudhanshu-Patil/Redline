@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.dashboard.app import _safe_path_component, app
-from src.dashboard.state import reset_sessions
+from src.dashboard.state import get_session, reset_sessions
 
 PAIR1_A = "data/samples/originals/lift_gas_compressor_26-KA-901.pdf"
 PAIR1_B = "data/samples/pair1/B.pdf"
@@ -109,6 +109,18 @@ class TestSubmitSample:
         r = client.get("/")
         assert location in r.text
 
+    def test_manifest_load_failure_shows_friendly_error_not_500(self, client, monkeypatch):
+        # A known pair_id whose manifest/ingest blows up (corrupt fixture,
+        # missing file after a partial checkout, etc.) must hit the same
+        # friendly-error path as a bad upload, never a raw 500.
+        def _boom(_path):
+            raise ValueError("manifest is corrupt")
+
+        monkeypatch.setattr("src.dashboard.app.load_manifest", _boom)
+        r = client.post("/submit/sample/pair1")
+        assert r.status_code == 400
+        assert "Could not load sample pair" in r.text
+
 
 class TestSessionView:
     def test_session_page_shows_stats(self, client):
@@ -131,6 +143,18 @@ class TestSessionView:
 
     def test_report_404s_for_unknown_session(self, client):
         assert client.get("/session/nope/report").status_code == 404
+
+    def test_report_404s_when_html_file_missing_from_disk(self, client):
+        # The session is real and report_paths["html"] is set, but the file
+        # itself is gone (e.g. an operator cleaned dashboard_runs/ while the
+        # process -- and its in-memory session -- was still up). Must 404,
+        # not raise FileNotFoundError from read_text().
+        location = _submit_sample(client, "pair1")
+        session_id = location.rsplit("/", 1)[-1]
+        session = get_session(session_id)
+        assert session is not None
+        session.report_paths["html"].unlink()
+        assert client.get(f"{location}/report").status_code == 404
 
     def test_download_json_is_valid_delta_report(self, client):
         location = _submit_sample(client, "pair1")

@@ -17,7 +17,7 @@ from src.observability import tracing
 class Reranker(Protocol):
     def score(self, query: str, passages: list[str]) -> list[float]:
         """Return one relevance score per passage, same order, higher = more relevant."""
-        ...
+        ...  # pragma: no cover
 
 
 class CrossEncoderReranker:

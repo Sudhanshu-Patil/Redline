@@ -84,9 +84,45 @@ changes. Verified crops of every edited region were reviewed during synthesis.
 | GT3-ADD-VALVE | New VALVE_GATE + label + tie-in LINE | added `43BL9020` | Added tagged geometry |
 | GT3-DEL-DRAIN | Drain stub LINE | removed | Pure geometry removal — no text key; only the geometry rule can catch it |
 
-## Pair 5 — stress set (pending Phase 12)
+## Pair 5 — stress set (Phase 12)
 
-Duplicated sheet set with scattered edits, for the scaling analysis.
+Not a checked-in manifest/ground-truth pair like 1-4 (deliberate scope boundary: plan §10's
+"4-5 labeled pairs" is already satisfied by the 4 eval-harness pairs, and Pair 5's actual job —
+"approximate a larger sheet set, for the scaling note" (§6/§14) — is a *measurement*, not
+another P/R/F1 fixture). Built and run by `scripts/stress_test_pair5.py`
+(`uv run python scripts/stress_test_pair5.py`): Pair 1's real, already-verified A/B documents
+(six real edits) are duplicated across N synthetic pages — bit-for-bit the same real content
+per page, just relabeled onto a different `bbox.page`, so ground truth is exactly "N × Pair 1's
+six edits," no new synthesis risk. The two large per-scale `A.canonical.json`/`B.canonical.json`
+dumps (~4MB each, N=10) are gitignored as deterministically regenerable; the actual measurements
+(`data/samples/pair5/stress_results.json`) are committed as the durable evidence.
+
+**Real measured results** (native PDF, `compute_delta()` wall time, same machine as every other
+timing in this repo):
+
+| Pages | Elements/side | Seconds | Added | Removed | Modified |
+|---|---|---|---|---|---|
+| 1 | 825 | 42.1 *(one-time embedding-model warmup, see below)* | 119 | 119 | 4 |
+| 2 | 1,650 | 3.2 | 238 | 238 | 8 |
+| 5 | 4,125 | 8.4 | 595 | 595 | 20 |
+| 10 | 8,250 | 17.7 | 1,190 | 1,190 | 40 |
+
+Two things worth reading precisely, not just the raw numbers:
+
+1. **Added/removed/modified scale exactly N×** (119→238→595→1190 is exactly 119×1/2/5/10; same
+   for modified at 4×). That's the correctness signal: no cross-page contamination, each page's
+   real edits detected independently and completely.
+2. **Time scales close to linearly with page count from N=2 onward** (≈1.6–1.8s/page: 3.2s/2,
+   8.4s/5, 17.7s/10) -- N=1's 42.1s is a one-time cost (SentenceTransformerEmbedder's first
+   real inference in the process, not just model load — the class-level cache means every
+   later call in the same run is warm) and not representative of steady-state per-page cost;
+   reported as measured rather than discarded, since a real deployment pays this exact cost on
+   its first request too.
+
+**This stress test is what actually found the Phase 12 page-scoping bug** (see the delta-engine
+findings section below) — every one of Pairs 1-4 is single-page, so nothing before Pair 5 ever
+exercised two elements sharing identical *normalized* bbox coordinates while sitting on
+different pages.
 
 ## Delta engine findings from real data (Phase 5)
 
@@ -254,3 +290,46 @@ pressure. The judge-prompt and rate-limit fixes were different in kind: both cor
 code this project owns (the validator's own logic; this project's own retry/backoff behavior),
 not a capability limit of the free-tier LLM being evaluated, so both were made directly rather
 than deferred.
+
+## Delta engine findings from real data (Phase 12): cross-page matching
+
+Pair 5 (above) surfaced a fourth real alignment bug — a serious one, and unlike the Phase 5
+findings, this one was a plain correctness bug rather than a calibration/threshold judgment
+call. **Every one of Pairs 1-4 is single-page**, so nothing before Pair 5 ever built a document
+with two elements sharing identical *normalized* (page-relative) bbox coordinates while sitting
+on different pages — a completely ordinary situation for any real multi-sheet P&ID set (the same
+tag/layout convention repeated per sheet).
+
+**The bug.** All three alignment tiers (`src/delta/align.py`) computed candidate bbox distance
+using only `BBox.normalized` (fractional 0-1 position *within* an element's own page) — `page`
+itself was never part of the matching key or the candidate filter. Two same-text elements on
+different pages, sitting at the same fractional position, are therefore indistinguishable by
+distance (both score exactly 0.0 against a same-position candidate on either page), so the
+greedy assignment's deterministic tie-break (`a.id`, `b.id` string order) — not actual page
+correspondence — decided which page's element "won" a match.
+
+**Confirmed with a minimal repro before touching Pair 5's full scale:** doc A has the same tag
+`DUPTAG` on page 0 and page 1; doc B keeps only page 1's copy (page 0's was genuinely deleted).
+Correct behavior: report page 0's `DUPTAG` as removed, leave page 1's matched/unchanged. Actual
+(pre-fix) behavior: the engine matched page *0*'s `DUPTAG` to B's surviving copy and reported
+page *1*'s as removed — the exact opposite of reality. In a real multi-page review, this is a
+report that confidently, wrongly tells a reviewer *the wrong sheet* changed, and the Phase 9
+markup overlay would have highlighted the wrong page's box as "removed."
+
+**Fix:** page is now part of the candidate-generation key/filter in all three tiers —
+`exact_key_match` groups by `(element_key, bbox.page)` instead of `element_key` alone,
+`geometry_match`'s coarse key gains `bbox.page` as a fourth component, and
+`embedding_proximity_match` gained an explicit `a.bbox.page != b.bbox.page: continue` gate
+alongside its existing same-type gate. Zero regressions across the full pre-existing test suite
+(463 tests) — expected, since every prior fixture defaults to `page=0` on both sides, making the
+new page-equality constraint a no-op for all of them. Four new regression tests
+(`TestPageScoping` in `tests/test_delta_align.py`) pin down the exact repro above for all three
+tiers, plus a same-non-zero-page sanity check.
+
+**A second-order benefit, not just a correctness fix: this also fixes a latent performance
+cliff.** Before the fix, tier 3's candidate generation was effectively O(n·m) over the *entire*
+flattened element pool regardless of page — an N-page duplicate set would have been O(n·m·N²)
+(all pages compared against all pages). Scoping to same-page pairs makes it N independent
+same-size sub-problems, O(n·m·N) — confirmed by Pair 5's own measurement above showing
+close-to-linear (not quadratic) time growth from 2 to 10 pages. A genuine 500-sheet set would
+have made the pre-fix quadratic behavior actively unusable, not just wrong.

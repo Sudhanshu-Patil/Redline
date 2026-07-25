@@ -1,0 +1,46 @@
+[
+  {
+    "pages": 1,
+    "elements_per_side": 825,
+    "elapsed_seconds": 42.149,
+    "added": 119,
+    "removed": 119,
+    "modified": 4,
+    "expected_modified_at_least": 6,
+    "alignment_rate": 0.8558,
+    "exact_key_rate": 0.9939
+  },
+  {
+    "pages": 2,
+    "elements_per_side": 1650,
+    "elapsed_seconds": 3.207,
+    "added": 238,
+    "removed": 238,
+    "modified": 8,
+    "expected_modified_at_least": 12,
+    "alignment_rate": 0.8558,
+    "exact_key_rate": 0.9939
+  },
+  {
+    "pages": 5,
+    "elements_per_side": 4125,
+    "elapsed_seconds": 8.37,
+    "added": 595,
+    "removed": 595,
+    "modified": 20,
+    "expected_modified_at_least": 30,
+    "alignment_rate": 0.8558,
+    "exact_key_rate": 0.9939
+  },
+  {
+    "pages": 10,
+    "elements_per_side": 8250,
+    "elapsed_seconds": 17.671,
+    "added": 1190,
+    "removed": 1190,
+    "modified": 40,
+    "expected_modified_at_least": 60,
+    "alignment_rate": 0.8558,
+    "exact_key_rate": 0.9939
+  }
+]

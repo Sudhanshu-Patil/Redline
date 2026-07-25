@@ -8,6 +8,7 @@ venv/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+.coverage
 dist/
 build/
 
@@ -23,8 +24,14 @@ traces/*.jsonl
 traces/*.json
 !traces/.gitkeep
 data/samples/generated/
+# Pair 5's duplicated-content dumps are large (~4MB each) and deterministically
+# regenerable (uv run python scripts/stress_test_pair5.py) -- the measured
+# stress_results.json (small, the actual evidence) stays committed.
+data/samples/pair5/*.canonical.json
 chroma_db/
 dashboard_runs/
+# CI's own --delta-only run, distinct from the committed real eval/scorecard.json
+eval/scorecard_ci.json
 *.db
 
 # Models cache

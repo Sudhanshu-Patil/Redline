@@ -35,6 +35,25 @@ class TestResolveTesseractCmd:
         assert resolve_tesseract_cmd() is None
 
 
+class TestGetVision:
+    def test_injected_client_is_returned_as_is(self):
+        vision = object()
+        adapter = PdfScannedAdapter(vision_client=vision)
+        assert adapter._get_vision() is vision
+
+    def test_no_injected_client_and_fallback_disabled_returns_none(self, monkeypatch):
+        monkeypatch.setattr(settings, "vision_fallback_enabled", False)
+        adapter = PdfScannedAdapter()
+        assert adapter._get_vision() is None
+
+    def test_no_injected_client_and_fallback_enabled_builds_a_real_llm_client(self, monkeypatch):
+        monkeypatch.setattr(settings, "vision_fallback_enabled", True)
+        from src.chat.llm import LLMClient
+
+        adapter = PdfScannedAdapter()
+        assert isinstance(adapter._get_vision(), LLMClient)
+
+
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [

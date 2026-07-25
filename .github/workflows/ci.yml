@@ -17,6 +17,7 @@ jobs:
         uses: astral-sh/setup-uv@v3
         with:
           version: "latest"
+          enable-cache: true
 
       - name: Set up Python
         run: uv python install 3.11
@@ -28,11 +29,34 @@ jobs:
         run: uv run ruff check .
 
       - name: Type-check (mypy)
-        run: uv run mypy src
+        run: uv run mypy src eval
 
       - name: Unit tests
-        run: uv run pytest --cov=src --cov-report=term-missing
+        run: uv run pytest --cov=src --cov=eval --cov-report=term-missing
 
-      # Enabled starting Phase 10, once eval/run_eval.py exists.
-      # - name: Eval scorecard
-      #   run: uv run make eval
+      # Delta-only eval scorecard: fully deterministic (BRIEF rule 2 --
+      # the delta engine never calls an LLM), so this is a real regression
+      # check against the 4 labeled ground-truth pairs on every push, with
+      # no network dependency or secret required. Written to a separate
+      # file rather than eval/scorecard.json so CI never overwrites the
+      # committed full scorecard (which has genuine chat/judge/retrieval
+      # results from a real live run -- see eval/scorecard.json and
+      # data/samples/PROVENANCE.md's "Eval harness findings" section).
+      #
+      # The full suite (chat groundedness via LLM-judge, retrieval-quality
+      # eval) needs a live LLM and takes tens of minutes against a
+      # free-tier provider's rate limits (measured firsthand -- see
+      # PROVENANCE.md) -- deliberately not run on every push. Run it
+      # on demand with `make eval` (needs LLM_API_KEY or
+      # ANTHROPIC_API_KEY set) and compare against the committed baseline
+      # with `make eval-diff OLD=eval/scorecard.json NEW=<new run>`.
+      - name: Delta-only eval scorecard (deterministic, no LLM)
+        run: uv run python -m eval.run_eval --delta-only --out eval/scorecard_ci.json
+
+      - name: Upload CI scorecard
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-scorecard-ci
+          path: |
+            eval/scorecard_ci.json
+            eval/cost_latency_report.md

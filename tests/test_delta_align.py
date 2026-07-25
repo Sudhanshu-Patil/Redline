@@ -261,6 +261,68 @@ class TestEmbeddingProximityMatch:
         assert len(matched) == 2
 
 
+class TestPageScoping:
+    """Real bug found via Pair 5 (multi-page stress set, plan §6/§12 Phase
+    12): every sample pair through Pair 4 was single-page, so nothing had
+    ever exercised two elements sharing identical *normalized* (page-
+    relative) bbox coordinates while sitting on different pages. All three
+    tiers used only normalized bbox distance, which is blind to page, so a
+    same-text/same-geometry element repeated per-page could be matched
+    across pages -- confirmed with a 2-page repro where a genuinely
+    unmatched page-1 tag was reported "removed" while the actually-removed
+    page-0 tag was silently treated as matched. Fixed by scoping every
+    tier's candidate generation to same-page pairs only.
+    """
+
+    def test_tier1_does_not_cross_pages(self):
+        # Same text on both pages of A; B keeps only the page-1 copy --
+        # the correct read is "page 0's tag was removed", not the reverse.
+        a_page0 = el("DUPTAG", seq=1, page=0)
+        a_page1 = el("DUPTAG", seq=2, page=1)
+        b_page1 = el("DUPTAG", seq=1, page=1)
+
+        matched, ua, ub = exact_key_match([a_page0, a_page1], [b_page1])
+        assert len(matched) == 1
+        assert matched[0].a.id == a_page1.id  # the real, same-page match
+        assert matched[0].b.id == b_page1.id
+        assert ua == [a_page0]  # correctly reported as the removed one
+        assert ub == []
+
+    def test_tier1_matches_normally_within_a_non_zero_page(self):
+        a = el("26BL9072", seq=1, page=3)
+        b = el("26BL9072", seq=1, page=3)
+        matched, _, _ = exact_key_match([a], [b])
+        assert len(matched) == 1
+
+    def test_tier2_does_not_cross_pages(self):
+        kwargs = {
+            "element_type": "geometry", "layer": "PIPING",
+            "entity_type": "INSERT", "block_name": "VALVE_GATE",
+        }  # fmt: skip
+        a_page0 = el("", x0=0.40, y0=0.30, x1=0.42, y1=0.32, page=0, **kwargs)
+        a_page1 = el("", x0=0.40, y0=0.30, x1=0.42, y1=0.32, page=1, **kwargs)
+        b_page1 = el("", x0=0.41, y0=0.31, x1=0.43, y1=0.33, page=1, **kwargs)
+
+        matched, ua, ub = geometry_match([a_page0, a_page1], [b_page1])
+        assert len(matched) == 1
+        assert matched[0].a.id == a_page1.id
+        assert ua == [a_page0]
+        assert ub == []
+
+    def test_tier3_does_not_cross_pages(self):
+        kwargs = {"element_type": "text_block", "x0": 0.10, "y0": 0.60, "x1": 0.15, "y1": 0.61}
+        a_page0 = el("FLOW RATE NOTE", page=0, **kwargs)
+        a_page1 = el("FLOW RATE NOTE", page=1, **kwargs)
+        b_page1 = el("FLOW RATE NOTE", page=1, **kwargs)
+        embedder = FakeEmbedder({"FLOW RATE NOTE": [1.0, 0.0]})
+
+        matched, ua, ub = embedding_proximity_match([a_page0, a_page1], [b_page1], embedder)
+        assert len(matched) == 1
+        assert matched[0].a.id == a_page1.id
+        assert ua == [a_page0]
+        assert ub == []
+
+
 class TestMovedAndRenamedTag:
     """Plan-named edge case: a tag that is both moved and renamed breaks
     tier 1 (the key changed) by construction. What happens next depends on

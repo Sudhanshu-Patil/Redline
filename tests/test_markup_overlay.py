@@ -14,7 +14,7 @@ from pathlib import Path
 import fitz
 import pytest
 
-from src.canonical.model import BBox
+from src.canonical.model import BBox, CanonicalDocument
 from src.delta.colors import STATUS_COLORS
 from src.delta.engine import Delta, compute_delta
 from src.ingest.dwg import DwgAdapter
@@ -23,6 +23,7 @@ from src.markup.overlay import (
     _boxes_for_side,
     _change_label,
     _hex_to_rgb01,
+    _resolve_dxf_path,
     render_markup_png,
     save_dxf_markup,
     save_pdf_markup,
@@ -89,6 +90,38 @@ class TestHexToRgb01:
             assert 0.0 <= r <= 1.0
             assert 0.0 <= g <= 1.0
             assert 0.0 <= b <= 1.0
+
+
+class TestResolveDxfPath:
+    """The .dwg branch needs the real ODA File Converter (same
+    environment-dependent boundary as test_dwg.py's own conversion tests),
+    so this only proves the dispatch: a .dwg source is routed through
+    convert_dwg_to_dxf(), a non-.dwg source is returned untouched."""
+
+    def _doc(self, raw_source_path: str) -> CanonicalDocument:
+        fmt = "dwg" if raw_source_path.lower().endswith(".dwg") else "pdf_native"
+        return CanonicalDocument(
+            pid="x", format=fmt, page_count=1, elements=[], raw_source_path=raw_source_path
+        )
+
+    def test_non_dwg_source_path_is_returned_unchanged(self):
+        result = _resolve_dxf_path(self._doc(str(PAIR3_A)))
+        assert result == PAIR3_A
+
+    def test_dwg_source_path_is_routed_through_the_oda_converter(self, monkeypatch):
+        converted = Path("converted/output.dxf")
+        called_with = {}
+
+        def fake_convert(path: Path) -> Path:
+            called_with["path"] = path
+            return converted
+
+        monkeypatch.setattr("src.ingest.dwg.convert_dwg_to_dxf", fake_convert)
+
+        result = _resolve_dxf_path(self._doc("drawing.dwg"))
+
+        assert result == converted
+        assert called_with["path"] == Path("drawing.dwg")
 
 
 class TestChangeLabel:

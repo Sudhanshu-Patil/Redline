@@ -129,6 +129,17 @@ class TestGenerateCostLatencyReport:
         )
         assert "real bottleneck" in text_with
 
+    def test_embedding_load_note_appears_only_when_measured(self):
+        text_without = generate_cost_latency_report(snapshot())
+        assert "one-time process cost" not in text_without
+
+        stage = latency(mean=1200.0)
+        text_with = generate_cost_latency_report(
+            snapshot(latency_by_stage={"delta.load_embedding_model": stage})
+        )
+        assert "one-time process cost" in text_with
+        assert "1,200ms measured" in text_with
+
     def test_output_has_no_non_ascii_mojibake_risk_characters(self):
         text = generate_cost_latency_report(snapshot())
         # scaling narrative must stay plain-ASCII-safe (Windows console

@@ -7,6 +7,7 @@ import pytest
 from eval.metrics import (
     AgreementRow,
     _is_below_match_threshold,
+    _locator_distance,
     _texts_match,
     compute_judge_agreement,
     evaluate_negative_control,
@@ -64,6 +65,37 @@ class TestTextsMatch:
 
     def test_both_empty_matches(self):
         assert _texts_match("", "") is True
+
+    def test_one_side_empty_after_strip_does_not_match(self):
+        # "" == "" short-circuits at the equality check above this branch;
+        # this exercises the not-equal, one-side-blank path specifically.
+        assert _texts_match("", "SP = 257 bar (g)") is False
+        assert _texts_match("   ", "SP = 257 bar (g)") is False
+
+
+class TestLocatorDistance:
+    def test_no_expected_bbox_returns_zero(self):
+        e = expected("gt1", "modified", "setpoint", bbox=None)
+        a = actual("modified", "setpoint", new_bbox=bbox(10, 10, 20, 20))
+        assert _locator_distance(e, a) == 0.0
+
+    def test_no_actual_bbox_returns_zero(self):
+        e = expected("gt1", "modified", "setpoint", bbox=(10, 10, 20, 20))
+        a = actual("modified", "setpoint")  # no old_bbox/new_bbox
+        assert _locator_distance(e, a) == 0.0
+
+    def test_computes_center_to_center_distance(self):
+        e = expected("gt1", "modified", "setpoint", bbox=(0, 0, 10, 10))  # center (5, 5)
+        a = actual("modified", "setpoint", new_bbox=bbox(3, 4, 13, 14))  # center (8, 9)
+        assert _locator_distance(e, a) == pytest.approx(5.0)  # 3-4-5 triangle
+
+    def test_prefers_new_bbox_over_old_bbox_when_both_present(self):
+        e = expected("gt1", "modified", "setpoint", bbox=(0, 0, 10, 10))  # center (5, 5)
+        a = actual(
+            "modified", "setpoint",
+            old_bbox=bbox(100, 100, 110, 110), new_bbox=bbox(0, 0, 10, 10),
+        )  # fmt: skip
+        assert _locator_distance(e, a) == 0.0
 
 
 class TestIsBelowMatchThreshold:
