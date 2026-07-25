@@ -100,8 +100,7 @@ def _doc_summary_line(pid: str, doc: CanonicalDocument | None) -> str:
         return f"- **{pid}**"
     rev = doc.revision_label or "(no revision label)"
     return (
-        f"- **{pid}** — {doc.format}, {rev}, {doc.page_count} page(s), "
-        f"{len(doc.elements)} elements"
+        f"- **{pid}** — {doc.format}, {rev}, {doc.page_count} page(s), {len(doc.elements)} elements"
     )
 
 
@@ -247,7 +246,7 @@ def _svg_stacked_bar_chart(
 
 _HTML_STYLE = """
 <style>
-  .viz-root, .report-root {
+  body, .viz-root, .report-root {
     color-scheme: light;
     --surface: #fcfcfb; --page: #f9f9f7;
     --ink-primary: #0b0b0b; --ink-secondary: #52514e; --ink-muted: #898781;
@@ -255,13 +254,21 @@ _HTML_STYLE = """
     --good: #0ca30c; --warning: #fab219; --critical: #d03b3b;
   }
   @media (prefers-color-scheme: dark) {
-    .viz-root, .report-root {
+    body, .viz-root, .report-root {
       color-scheme: dark;
       --surface: #1a1a19; --page: #0d0d0d;
       --ink-primary: #ffffff; --ink-secondary: #c3c2b7; --ink-muted: #898781;
       --gridline: #2c2c2a; --border: rgba(255,255,255,0.10);
     }
   }
+  /* Tokens must be defined ON body (not just its .report-root child) --
+     the next rule reads var(--page)/var(--ink-primary) on body itself, and
+     CSS custom properties are only visible to the element they're declared
+     on and its descendants, never an ancestor. Getting this backwards was a
+     real bug: it left body's own background/color unresolved, so dark-mode
+     users saw default-black text on a dark-but-not-explicitly-set canvas
+     inside every box that inherited color from body instead of a
+     .report-root descendant that had a color of its own. */
   body { margin: 0; background: var(--page); color: var(--ink-primary);
          font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
   .report-root { max-width: 900px; margin: 0 auto; padding: 32px 24px 64px; }
@@ -430,7 +437,7 @@ def render_html(
     if excluded_count:
         chart_note = (
             f'<p class="conf">{excluded_count} single-character fragment'
-            f'{"s" if excluded_count != 1 else ""} omitted from the charts above '
+            f"{'s' if excluded_count != 1 else ''} omitted from the charts above "
             "(below the matching-confidence floor — see full tables below).</p>"
         )
 

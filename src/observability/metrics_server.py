@@ -21,7 +21,7 @@ router = APIRouter()
 
 _HTML_STYLE = """
 <style>
-  .metrics-root {
+  body, .metrics-root {
     color-scheme: light;
     --surface: #fcfcfb; --page: #f9f9f7;
     --ink-primary: #0b0b0b; --ink-secondary: #52514e; --ink-muted: #898781;
@@ -29,13 +29,22 @@ _HTML_STYLE = """
     --good: #0ca30c; --warning: #fab219; --critical: #d03b3b;
   }
   @media (prefers-color-scheme: dark) {
-    .metrics-root {
+    body, .metrics-root {
       color-scheme: dark;
       --surface: #1a1a19; --page: #0d0d0d;
       --ink-primary: #ffffff; --ink-secondary: #c3c2b7; --ink-muted: #898781;
       --gridline: #2c2c2a; --border: rgba(255,255,255,0.10);
     }
   }
+  /* Tokens must be defined ON body, not just its .metrics-root child --
+     the next rule reads var(--page)/var(--ink-primary) on body itself, and
+     custom properties are only visible to the element they're declared on
+     and its descendants, never an ancestor. Getting this backwards was a
+     real bug: body's own background/color never resolved, so in dark mode
+     stat tiles got the correct dark --surface (a real .metrics-root
+     descendant) but their text inherited body's unresolved color -- default
+     black -- instead of the dark-mode --ink-primary override, i.e. black
+     text on a near-black tile. */
   body { margin: 0; background: var(--page); color: var(--ink-primary);
          font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
   .metrics-root { max-width: 900px; margin: 0 auto; padding: 32px 24px 64px; }

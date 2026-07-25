@@ -85,6 +85,20 @@ class TestDashboardHtmlEndpoint:
         html = client.get("/").text
         assert "prefers-color-scheme: dark" in html
 
+    def test_body_is_in_scope_for_the_color_tokens(self, client):
+        # Regression guard for a real contrast bug: --ink-primary/--page etc.
+        # were defined only on .metrics-root, a *descendant* of <body> --
+        # custom properties aren't visible to an ancestor of where they're
+        # declared, so `body { color: var(--ink-primary) }` silently failed
+        # to resolve. In dark mode this produced black text on a near-black
+        # tile: the tile itself (a real .metrics-root descendant) picked up
+        # the correct dark --surface, but text inheriting through the broken
+        # body rule fell back to the browser's default black instead of the
+        # dark-mode --ink-primary override.
+        html = client.get("/").text
+        selector = html.split("--ink-primary:")[0].rsplit("}", 1)[-1].split("{")[0]
+        assert "body" in selector
+
     def test_no_unescaped_script_from_span_names(self, tmp_path, monkeypatch):
         """Span/model names ultimately come from code we control, but the
         renderer still must not blindly interpolate raw strings into HTML --

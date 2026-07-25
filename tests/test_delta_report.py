@@ -183,6 +183,21 @@ class TestRenderHtml:
         html = render_html(report, doc_a, doc_b)
         assert "prefers-color-scheme: dark" in html
 
+    def test_body_is_in_scope_for_the_color_tokens(self, sample_report):
+        # Regression guard for a real contrast bug: --ink-primary/--page etc.
+        # were defined only on .report-root/.viz-root, both *descendants* of
+        # <body> -- custom properties aren't visible to an ancestor of where
+        # they're declared, so `body { color: var(--ink-primary) }` silently
+        # failed to resolve. In dark mode this produced black text on a
+        # near-black tile: the tile itself (a real .report-root descendant)
+        # picked up the correct dark --surface, but text inheriting through
+        # the broken body rule fell back to the browser's default black
+        # instead of the dark-mode --ink-primary override.
+        report, doc_a, doc_b = sample_report
+        html = render_html(report, doc_a, doc_b)
+        selector = html.split("--ink-primary:")[0].rsplit("}", 1)[-1].split("{")[0]
+        assert "body" in selector
+
     def test_warning_banner_rendered_when_present(self):
         from src.delta.engine import DeltaReport, DeltaStats
 
