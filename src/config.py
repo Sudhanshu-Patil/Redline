@@ -92,9 +92,22 @@ class Settings(BaseSettings):
     ocr_tesseract_psm: int = 11
     tesseract_cmd: str = ""  # explicit path to tesseract.exe; empty = rely on PATH
 
-    # Vision-LLM fallback for low-confidence OCR regions
+    # Vision-LLM fallback for low-confidence OCR regions. Measured on real
+    # Pair 2 data (2026-07-25): tesseract flagged 408 of 916 elements
+    # (44.5%) as low-confidence on one real scanned P&ID, so the original
+    # cap of 12 covered only ~3% of them -- the other ~97% kept raw,
+    # sometimes-garbled tesseract text, which cascades into the delta
+    # engine (garbled text fails classify_block_lines' regexes, changing an
+    # element's classified type, which the delta engine's same-type
+    # matching gate then treats as unrelated content -- see PROVENANCE.md's
+    # "Real-world hardening" section for the full mechanism). Raised to
+    # meaningfully improve coverage; still not exhaustive (a genuinely
+    # dense scan can still exceed it) and still bounded deliberately, since
+    # each region is a real LLM call against whatever provider/rate-limit
+    # budget is configured -- not raised to "cover everything" at the cost
+    # of ingest time and free-tier quota.
     vision_fallback_enabled: bool = True
-    vision_fallback_max_regions: int = 12  # cap LLM calls per document
+    vision_fallback_max_regions: int = 40
     vision_fallback_confidence: float = 0.9  # confidence assigned to LLM re-reads
 
     # DWG/DXF

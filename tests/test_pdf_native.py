@@ -227,3 +227,100 @@ def test_instrument_function_code_at_end_of_block_does_not_crash():
     lines = [L("VENDOR"), L("PIT")]
     result = classify_block_lines(lines)
     assert result[-1] == ElementDraft("text_block", "PIT", B)
+
+
+class TestOcrTolerantReclassification:
+    """Real bug found via a live Pair 2 delta run (2026-07-25): tesseract's
+    common single-character confusions (0/O, 1/I/l, 5/S, 8/B, 2/Z, 6/G)
+    broke these exact-anchored patterns just often enough to reclassify a
+    real line_number/valve/tag as a generic text_block, which then made the
+    delta engine's same-type matching gate refuse to rescue it against its
+    correctly-classified counterpart even at near-zero bbox distance. Only
+    ever enabled by the scanned-PDF adapter (ocr_tolerant defaults False).
+    """
+
+    def test_disabled_by_default(self):
+        # The exact real corrupted string observed live -- without
+        # ocr_tolerant, it must stay a plain text_block (native PDF/DWG
+        # behavior, unchanged).
+        lines = [L('1"-Al-63-9006-AS20-00')]
+        assert classify_block_lines(lines) == [
+            ElementDraft("text_block", '1"-Al-63-9006-AS20-00', B)
+        ]
+
+    def test_line_number_with_lowercase_l_for_capital_i(self):
+        # Real example: "AI" (a valid 2-letter service code) OCR'd as "Al"
+        # (lowercase L instead of capital I).
+        lines = [L('1"-Al-63-9006-AS20-00')]
+        result = classify_block_lines(lines, ocr_tolerant=True)
+        assert result[0].type == "line_number"
+        assert result[0].text == '1"-Al-63-9006-AS20-00'  # original text never rewritten
+        assert result[0].attributes["ocr_reclassified"] == "true"
+
+    def test_leading_size_digit_is_not_corrupted_by_a_blind_substitution(self):
+        # Regression guard for the exact mistake caught during development:
+        # a naive whole-string substitution (e.g. blindly mapping every "1"
+        # to "I") would also mangle the line number's own leading size
+        # digit ("1" -> "I"), breaking the match. The fix must be
+        # position-aware (only the letter-class field is loosened).
+        lines = [L('1"-Al-63-9006-AS20-00')]
+        result = classify_block_lines(lines, ocr_tolerant=True)
+        assert result[0].type == "line_number"
+
+    def test_valve_tag_with_inserted_digit_lookalike(self):
+        # Real example from Pair 2: the clean tag "40GT9309" was OCR'd as
+        # "40G6T9309" (an inserted "6" inside the letter-class field).
+        lines = [L("40G6T9309")]
+        result = classify_block_lines(lines, ocr_tolerant=True)
+        assert result[0].type == "valve"
+        assert result[0].text == "40G6T9309"
+
+    def test_equipment_tag_with_digit_lookalike_letter(self):
+        # Plausible OCR confusion: real tag "26-HB-911" misread as
+        # "26-H8-911" (8 for B).
+        lines = [L("26-H8-911")]
+        result = classify_block_lines(lines, ocr_tolerant=True)
+        assert result[0].type == "tag"
+        assert result[0].text == "26-H8-911"
+        assert result[0].attributes["ocr_reclassified"] == "true"
+
+    def test_instrument_loop_function_code_is_normalized_for_vocabulary_check(self):
+        # "PIT" OCR'd with a lookalike digit in place of "I" -- the
+        # tolerant regex matches structurally, but the captured function
+        # code must be normalized back to "PIT" before the
+        # INSTRUMENT_FUNCTION_CODES membership check, or it would never
+        # pass (a corrupted string can't equal a known vocabulary entry).
+        lines = [L("P1T-9062")]
+        result = classify_block_lines(lines, ocr_tolerant=True)
+        assert result[0].type == "instrument_loop"
+        assert result[0].attributes["function"] == "PIT"  # normalized, not "P1T"
+        assert result[0].attributes["loop_number"] == "9062"
+        assert result[0].text == "P1T-9062"  # displayed text still untouched
+
+    def test_function_code_that_does_not_normalize_to_a_known_code_stays_text_block(self):
+        # The tolerant regex matches structurally, but "XYZ" (normalized:
+        # still "XYZ") isn't a real instrument function code -- must not be
+        # accepted just because it structurally looks tag-shaped.
+        lines = [L("XYZ-9062")]
+        result = classify_block_lines(lines, ocr_tolerant=True)
+        assert result[0] == ElementDraft("text_block", "XYZ-9062", B)
+
+    def test_already_classified_flag_is_not_touched(self):
+        # Single-letter flags already carry a "kind" attribute -- the OCR
+        # retry must skip anything already specifically classified, not
+        # just anything typed text_block.
+        lines = [L("U")]
+        result = classify_block_lines(lines, ocr_tolerant=True)
+        assert result == [ElementDraft("text_block", "U", B, {"kind": "flag"})]
+
+    def test_generic_prose_is_not_falsely_reclassified(self):
+        # Safety net: ordinary drawing text must not accidentally acquire
+        # tag-shaped structure under the loosened letter-class tolerance.
+        words = [
+            "VENDOR", "GAS", "COMPRESSOR", "SKID", "DESIGN", "REV", "SHEET",
+            "SCALE", "DRAWING", "APPROVED", "PIPING", "MATERIAL", "TYPICAL",
+        ]  # fmt: skip
+        for word in words:
+            result = classify_block_lines([L(word)], ocr_tolerant=True)
+            assert result[0].type == "text_block", f"{word!r} was falsely reclassified"
+            assert "ocr_reclassified" not in result[0].attributes

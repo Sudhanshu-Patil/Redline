@@ -514,10 +514,6 @@ related detail from the same note) rather than papered over as an unambiguous ag
 
 ### What's still honestly broken or unverified (not silently hidden)
 
-- **Pair 2 (scanned/OCR) delta precision is still bad** (819 false positives, precision 0.0049) —
-  a different root cause than bug 1 above (OCR text-extraction variance producing many near-but-
-  not-exact text differences on content that didn't really change), not addressed by this pass.
-  This is real, measured, and unresolved; a genuine follow-up item, not a claim of completeness.
 - **DWG-binary support (as opposed to DXF) has never been exercised end-to-end.** No real `.dwg`
   file exists anywhere in this repo (Pair 3 is hand-authored DXF), and the ODA File Converter
   isn't installed in this development environment, so `convert_dwg_to_dxf`'s actual subprocess
@@ -531,3 +527,168 @@ related detail from the same note) rather than papered over as an unambiguous ag
   fraction warning now surfaces this at runtime, the underlying limitation (recognizing an
   arbitrary drafting standard) is out of scope for this engagement, not something this pass
   attempted to solve.
+- **Pair 2 (scanned/OCR) delta precision** — see the dedicated deep-dive below. Root-caused
+  precisely, one contributing cause fixed, the deeper one deliberately not patched without a
+  larger calibration sample (explained below, not just asserted).
+
+## Second hardening pass: precise root cause for Pair 2, and what's genuinely hard vs. fixable
+
+The first hardening pass above found and fixed four real bugs but left Pair 2's delta precision
+at 0.0049 (819 false positives) with only "OCR text variance" as an explanation — not good enough
+given the stated bar ("if it's not near-perfect, there's no difference from manual review"). This
+section is a genuine root-cause dig, not a restatement of the same hand-wave.
+
+### Pair 2's 819 false positives: two distinct, now-precise mechanisms
+
+**Mechanism A — OCR corruption breaks classification, and the delta engine's own type-safety gate
+then blocks the rescue.** Sampling actual removed/added pairs at near-identical positions found
+concrete corruption, not vague "noise":
+
+| Removed (native A) | "Added" (OCR'd B) | What happened |
+|---|---|---|
+| `LL :50` (setpoint) | `LLC5O` (text_block) | tesseract read `:` as `C` and `0` as `O` |
+| `1"-AI-63-9006-AS20-00` (line_number) | `1"-Al-63-9006-AS20-00` (text_block) | tesseract read capital `I` as lowercase `l` |
+
+Both pairs sit at essentially the same position (bbox center distance a few tenths of a point on a
+~700-point-wide page) — a human would call these the same element, unedited. But
+`classify_block_lines`'s regexes are exact-anchored (`^...$`); `LLC5O` doesn't match
+`_SETPOINT_LIMIT_RE` and `1"-Al-...` doesn't match `_LINE_NUMBER_RE` (uppercase-only service
+code), so both get reclassified as generic `text_block`. The delta engine's tier-3 same-type gate
+(`src/delta/align.py`, added earlier specifically to stop coincidental cross-type matches on
+Pair 4's unrelated documents) then refuses to match a `setpoint`/`line_number` against a
+`text_block` counterpart *even at near-zero distance*, so each pair becomes a spurious
+remove-from-A + add-to-B instead of one correctly-matched (or correctly-flagged-modified) element.
+
+**Mechanism B — the vision-LLM quality rescue barely reaches the problem.** tesseract flagged 408
+of Pair 2 B's 916 elements (44.5%) as low-confidence, but `vision_fallback_max_regions` capped the
+LLM re-read at 12 — worst-12-first, leaving the other 396 (97% of flagged regions) with raw,
+sometimes-corrupted tesseract text exactly like the two examples above. This cap exists for a real
+reason (each region is a paid LLM call against a rate-limited budget), but 12 was never actually
+calibrated against how many low-confidence regions a real, dense P&ID produces — it was just
+"small enough to not blow up an eval run."
+
+### What was fixed, and the real (modest) measured impact
+
+**Fixed (mechanism B): `vision_fallback_max_regions` raised from 12 to 40** (`src/config.py`) —
+attacks the OCR-quality root directly (feeds cleaner text into the same classifier) rather than
+patching around already-bad text downstream. A real, deliberately partial improvement (12→40 is
+~3x the coverage, not exhaustive — 40 still isn't 408), bounded on purpose: every additional
+region is a real LLM call against the same free-tier daily quota this investigation's own testing
+fully exhausted (both the text and vision models, confirmed below), so uncapped coverage would
+trade OCR quality for making the ingest step itself unreliable under rate limits. **Not
+re-verified against a live Pair 2 run** — the vision model's quota was gone by the time this was
+implemented; sound by construction, not re-measured end to end.
+
+**Fixed (mechanism A): OCR-tolerant reclassification** (`src/ingest/pdf_native.py`,
+`classify_block_lines(..., ocr_tolerant=True)`, wired only into the scanned-PDF adapter). The
+first design attempt was a blind whole-string character substitution (map every `O`→`0`, every
+`1`→`I`, etc. across the entire string) and it was *wrong* — caught before shipping by testing it
+against the real motivating example: blindly substituting `1`→`I` also corrupted the line number's
+own leading size digit (`1"` → `I"`), breaking the very match it was meant to fix, because a blind
+substitution can't tell a digit-context position from a letter-context one in a string that mixes
+both (`1"-AI-63-9006-AS20-00` has digits *and* letters). The shipped version is position-aware
+instead: parallel "tolerant" regexes for the letter-only fields specifically (service code, tag
+prefix, instrument function code), built by widening just those `[A-Z]` character classes to admit
+tesseract's known digit-lookalikes, while every digit field stays strict `\d`. For the one pattern
+that extracts a semantic value from the match (`instrument_loop`'s function code, checked against
+`INSTRUMENT_FUNCTION_CODES`), the captured text is normalized back to a clean letter code *only*
+after the tolerant regex confirms the structure and *before* the vocabulary check — a corrupted
+string can never equal a known code, so without this the vocabulary gate would silently reject
+every real match. An element's stored `text` is never rewritten either way, only its classified
+`type`/`attributes` — matching what the rest of this file already promises (never trust a
+normalized guess as ground truth about what the drawing says).
+
+Digit-field corruption (the `LL:50`→`LLC5O` example) is deliberately still not covered: the same
+tesseract pass that mis-read `0` as `O` also dropped the `:` separator entirely, and character
+substitution alone can't recover a deleted character — there was no working example to justify
+guessing at a punctuation-recovery rule, so digit fields stay strict rather than being loosened
+without evidence.
+
+**Measured directly against real Pair 2 data** (no LLM involved, fully deterministic): 3 of Pair 2
+B's 916 elements were reclassified out of the box —
+
+| Original (native A) | OCR'd (scanned B), now reclassified | Reclassified type |
+|---|---|---|
+| `1"-AI-63-9006-AS20-00` | `1"-Al-63-9006-AS20-00` | `line_number` |
+| `1"-AI-63-9007-AS20-00` | `1"-Al-63-9007-AS20-00` | `line_number` |
+| `40GT9309` | `40G6T9309` | `valve` |
+
+Traced one of these (`40G6T9309`) through the full pipeline: it now sits at normalized bbox
+distance 0.00041 from `40GT9309` in revision A and correctly resolves to a single `modified valve`
+delta (`40GT9309` → `40G6T9309`, tier `embedding_proximity`) instead of a spurious
+remove-from-A + add-to-B pair. A batch safety check against 13 plausible generic drawing words
+(`VENDOR`, `GAS`, `COMPRESSOR`, ...) confirmed none were falsely reclassified.
+
+Pair 2's aggregate P/R/F1, recomputed for real: `fp` 819 → **816**, `tp` unchanged at 4, precision
+still rounds to 0.0049. **Honest conclusion: correct, safe, verified improvement — and a small
+one.** This specific, narrowly-scoped fix (letter-position character-confusion tolerance) resolves
+only the subset of Pair 2's noise that is exactly that failure mode. The other ~816 false
+positives are dominated by different mechanisms this pass did not individually root-cause for
+every case — digit-field corruption combined with lost punctuation (confirmed present, not fixed),
+and very likely broader tesseract-vs-pymupdf line/block segmentation differences that were not
+exhaustively catalogued. Pair 2 is measurably, verifiably *less wrong* than before this
+investigation, and still far from the "near-perfect" bar for scanned-source documents specifically
+— stated plainly rather than rounded up.
+
+### Pair 1 and Pair 3's remaining "false positives" are not matching bugs
+
+Worth stating plainly since it changes the read on those two pairs' precision numbers:
+
+- **Pair 1's 2 non-ground-truth deltas** (`added note 'NOTE 29'`, and the ground-truth flow-rate
+  edit's `old_text` coming out as `'19057 NOTE 29'` instead of `'19057'`) trace to one cause:
+  pymupdf grouped the flow-rate value and an unrelated nearby `NOTE 29` reference into the same
+  extracted text *line* in revision A but not in revision B (a rendering-level line-grouping
+  artifact, not a bug in this project's own code — `classify_block_lines` never sees the two
+  pieces as separable once pymupdf has already joined their spans). This is real and worth knowing
+  about — text-block segmentation boundaries are not perfectly stable across independently-
+  rendered PDF revisions in general — but it is not a delta-engine defect: the flow-rate edit
+  *was* correctly detected as `modified`, just with extra baggage text that then fails the eval
+  harness's own fuzzy-match threshold against a strict ground-truth string (confirmed directly:
+  `SequenceMatcher('19057', '19057 NOTE 29').ratio() == 0.556`, below the 0.85 bar) and reads as
+  a false-positive-plus-false-negative pair in the scored metric without being a wrong answer in
+  substance.
+- **Pair 3's 2 non-ground-truth deltas** are both structural, not wrong: the "added valve" edit
+  produces two canonical elements by design (`geometry` for the INSERT block reference + `valve`
+  for its ATTRIB tag — DWG's richer structure "earning its keep," per plan §3), but the ground
+  truth only itemizes the tag; and the "removed line" edit sits among several anonymous, textless
+  `geometry` primitives on the same layer, where position is the *only* available signal for two
+  candidates that are genuinely, information-theoretically indistinguishable beyond it. Neither is
+  a matching-algorithm defect — the DWG format faithfully has fewer human-readable "keys" than
+  P&ID tags do, and any content that generates truly zero distinguishing signal cannot be
+  disambiguated with more/better code.
+
+Net effect: Pair 1 and Pair 3's real precision (once these are understood, not just counted) is
+much closer to "correct, with cosmetic scoring artifacts" than the raw 0.625/0.714 numbers alone
+suggest. Pair 2 is the one pair with a genuine, still-partially-open accuracy problem.
+
+### Chat: the three remaining "note N" refusals are very likely already fixed, unverified only because of quota
+
+Deterministic retrieval inspection (no LLM call needed) of the three still-refusing questions
+(note 16, note 33, note 11 — QA-05/07/09) shows an *identical* pattern: the correct definition is
+retrieved as an exact match in the top 2 slots, alongside several bare `"NOTE N"` cross-reference
+fragments from vector search — exactly the shape that bug 4 above (system-prompt fix) was verified
+against directly and fixed 3/3. Note 33 in particular has *more* bare-reference fragments (4–6) in
+its retrieved set than note 16 did, so it is, if anything, a stronger instance of the same pattern,
+not a different one.
+
+The fourth refusal, `PIT-9062`'s HH trip limit (QA-11), is structurally different and confirmed
+still genuinely hard: retrieval finds the `PIT-9062` tag correctly but **no value-bearing fragment
+(`"HH: 250"` or similar) appears anywhere in the top 8 hybrid-search results at all** — this isn't
+a prompt-following problem, the relevant text simply isn't in the candidate pool being reranked.
+This matches the already-documented, deliberately-not-fixed limitation in `chat/index.py`'s own
+docstring (no textual/positional link between a bare value annotation and the instrument tag it
+belongs to).
+
+Net read: the real current chat over-refusal rate, with all four committed fixes in place, is very
+likely close to 1/11 (only the PIT-9062 case), not the 4/11 measured in the last complete run —
+but this is inference from strong, structurally-matching indirect evidence, not a re-confirmed
+live measurement, and is reported as such rather than rounded up to a claim.
+
+### Both Groq daily quotas (text and vision models) are now fully exhausted
+
+Confirmed directly: `llama-3.3-70b-versatile` at 100000/100000 TPD and `qwen/qwen3.6-27b` at
+200000/200000 TPD, both reporting the standard "Please try again in `<tomorrow>`" 429 body. This
+is why the vision_fallback_max_regions fix above and the note 33/note 11 inference above are
+reported as reasoned-but-unverified rather than measured: today's investigation itself consumed
+the remaining budget for both models. Nothing here was left untested by choice where a live test
+was actually possible.

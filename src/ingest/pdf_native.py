@@ -123,11 +123,151 @@ class ElementDraft:
         return f"ElementDraft({self.type!r}, {self.text!r}, attributes={self.attributes!r})"
 
 
-def classify_block_lines(lines: list[RawLine]) -> list[ElementDraft]:
+def _classify_single_token(stripped: str, bbox: RawBBox) -> ElementDraft | None:
+    """The single-line, non-stateful classification rules (tags, setpoints,
+    line numbers, size transitions) -- factored out so the OCR-tolerant
+    retry pass below (_reclassify_ocr_tolerant) can run the exact same
+    rules against a confusion-normalized variant of a line's text without
+    duplicating (and risking drifting from) the pattern list. Excludes note
+    handling (stateful, multi-line lookahead) and the instrument-loop
+    pattern (needs the *next* line), which stay in classify_block_lines
+    itself. Returns None if nothing matches -- the caller's fallback is a
+    generic text_block.
+    """
+    if _LINE_NUMBER_RE.match(stripped):
+        return ElementDraft("line_number", stripped, bbox)
+
+    m = _HYPHENATED_INSTRUMENT_RE.match(stripped)
+    if m and m.group(1) in INSTRUMENT_FUNCTION_CODES:
+        return ElementDraft(
+            "instrument_loop", stripped, bbox,
+            {"function": m.group(1), "loop_number": m.group(2)},
+        )  # fmt: skip
+
+    if _VALVE_TAG_RE.match(stripped):
+        return ElementDraft("valve", stripped, bbox)
+
+    if _EQUIP_TAG_RE.match(stripped):
+        return ElementDraft("tag", stripped, bbox)
+
+    m = _SETPOINT_INLINE_RE.match(stripped)
+    if m:
+        return ElementDraft(
+            "setpoint", stripped, bbox,
+            {"setpoint_type": "SP", "value": m.group(2), "unit": m.group(3).strip()},
+        )  # fmt: skip
+
+    m = _SETPOINT_LIMIT_RE.match(stripped)
+    if m:
+        return ElementDraft(
+            "setpoint", stripped, bbox, {"setpoint_type": m.group(1), "value": m.group(2)}
+        )
+
+    if _SIZE_TRANSITION_RE.match(stripped):
+        return ElementDraft("dimension", stripped, bbox, {"kind": "size_transition"})
+
+    return None
+
+
+# Tesseract commonly misreads a handful of digit shapes where an uppercase
+# letter belongs (0/O, 1 or lowercase l/I, 5/S, 8/B, 2/Z, 6/G) -- a
+# well-established OCR failure mode, not guessed. Used to build *tolerant*
+# variants of the letter-only fields in tag/line-number/instrument
+# patterns below -- deliberately position-aware (only the letter-class
+# positions are loosened; digit positions stay strict \d) rather than a
+# blind whole-string substitution: an earlier version of this fix did a
+# global find-replace across the whole string and it *broke* line numbers
+# like `1"-AI-63-...` by also mangling the leading size digit ("1" -> "I"),
+# since a blind substitution can't tell a digit-context position from a
+# letter-context one in a string that mixes both. Digit-field corruption
+# is deliberately NOT covered here: the one observed example ("LL:50" OCR'd
+# as "LLC5O") also lost the ':' separator in the same OCR pass, which
+# character substitution alone can't recover, so there's no working
+# example to justify loosening digit fields too -- see PROVENANCE.md.
+_OCR_LETTERISH = "01l5826"
+_OCR_LETTERISH_TO_LETTER = {"0": "O", "1": "I", "l": "I", "5": "S", "8": "B", "2": "Z", "6": "G"}
+
+_LINE_NUMBER_OCR_RE = re.compile(
+    r'^\d+(\.\d+)?"-[A-Z' + _OCR_LETTERISH + r']{2,4}-\d{2,4}-\d{3,6}-[A-Z0-9]+-\d{2}$'
+)
+_VALVE_TAG_OCR_RE = re.compile(r"^\d{2}[A-Z" + _OCR_LETTERISH + r"]{2,4}\d{3,5}[A-Z]?$")
+_EQUIP_TAG_OCR_RE = re.compile(r"^\d{2}-[A-Z" + _OCR_LETTERISH + r"]{1,3}-\d{3,4}[A-Z]?$")
+_HYPHENATED_INSTRUMENT_OCR_RE = re.compile(r"^([A-Z" + _OCR_LETTERISH + r"]{2,5})-(\d{3,6}[A-Z]?)$")
+
+
+def _normalize_letterish(s: str) -> str:
+    """Maps OCR digit-lookalikes back to the letter they stand in for --
+    only ever applied to a substring already confirmed (by a tolerant
+    regex + membership in a known vocabulary) to be a letter field, never
+    blindly across a whole mixed alphanumeric string."""
+    return "".join(_OCR_LETTERISH_TO_LETTER.get(c, c) for c in s)
+
+
+def _reclassify_ocr_tolerant(drafts: list[ElementDraft]) -> None:
+    """In place: any draft that fell all the way through to a bare
+    text_block (type == "text_block" and no attributes -- i.e. not already
+    a deliberately-classified flag/valve_status_flag, which carry a "kind")
+    gets one retry against the *_OCR_RE tolerant patterns above. Its stored
+    text is left exactly as extracted either way -- tolerant matching
+    recovers the element's *type* for downstream matching purposes, never
+    rewrites what the drawing is claimed to say.
+
+    Why this exists (found via a live Pair 2 delta run, 2026-07-25):
+    tesseract's common single-character confusions break the exact-anchored
+    patterns in _classify_single_token just often enough to reclassify a
+    real line_number/valve/tag/instrument_loop as a generic text_block --
+    which then makes the delta engine's same-type matching gate (src/delta/
+    align.py, deliberately strict to reject Pair 4-style cross-document
+    layout coincidences) refuse to match it against its correctly-
+    classified counterpart on the other revision, even at near-zero bbox
+    distance. Recovering the type is enough to let that gate do its job
+    correctly again. See PROVENANCE.md's "Real-world hardening" section for
+    the full mechanism and the measured before/after.
+    """
+    for draft in drafts:
+        if draft.type != "text_block" or draft.attributes:
+            continue
+        stripped = draft.text
+
+        if _LINE_NUMBER_OCR_RE.match(stripped):
+            draft.type = "line_number"
+            draft.attributes = {"ocr_reclassified": "true"}
+            continue
+
+        m = _HYPHENATED_INSTRUMENT_OCR_RE.match(stripped)
+        if m:
+            function = _normalize_letterish(m.group(1))
+            if function in INSTRUMENT_FUNCTION_CODES:
+                draft.type = "instrument_loop"
+                draft.attributes = {
+                    "function": function,
+                    "loop_number": m.group(2),
+                    "ocr_reclassified": "true",
+                }
+                continue
+
+        if _VALVE_TAG_OCR_RE.match(stripped):
+            draft.type = "valve"
+            draft.attributes = {"ocr_reclassified": "true"}
+            continue
+
+        if _EQUIP_TAG_OCR_RE.match(stripped):
+            draft.type = "tag"
+            draft.attributes = {"ocr_reclassified": "true"}
+            continue
+
+
+def classify_block_lines(lines: list[RawLine], ocr_tolerant: bool = False) -> list[ElementDraft]:
     """Classify one text block's lines (in original document order) into elements.
 
     Pure function, independent of pymupdf, so classification rules are unit
     testable against hand-built line lists without a real PDF.
+
+    `ocr_tolerant`: retry OCR-confusion-normalized variants for anything
+    that falls through to a bare text_block (see _reclassify_ocr_tolerant).
+    Only ever passed True by the scanned-PDF adapter -- native PDF and DWG
+    text extraction is exact, so the same tolerance there would only add
+    misclassification risk for zero benefit.
     """
     drafts: list[ElementDraft] = []
     i = 0
@@ -182,59 +322,9 @@ def classify_block_lines(lines: list[RawLine]) -> list[ElementDraft]:
             i += 1
             continue
 
-        if _LINE_NUMBER_RE.match(stripped):
-            drafts.append(ElementDraft("line_number", stripped, bbox))
-            i += 1
-            continue
-
-        m = _HYPHENATED_INSTRUMENT_RE.match(stripped)
-        if m and m.group(1) in INSTRUMENT_FUNCTION_CODES:
-            drafts.append(
-                ElementDraft(
-                    "instrument_loop",
-                    stripped,
-                    bbox,
-                    {"function": m.group(1), "loop_number": m.group(2)},
-                )
-            )
-            i += 1
-            continue
-
-        if _VALVE_TAG_RE.match(stripped):
-            drafts.append(ElementDraft("valve", stripped, bbox))
-            i += 1
-            continue
-
-        if _EQUIP_TAG_RE.match(stripped):
-            drafts.append(ElementDraft("tag", stripped, bbox))
-            i += 1
-            continue
-
-        m = _SETPOINT_INLINE_RE.match(stripped)
-        if m:
-            drafts.append(
-                ElementDraft(
-                    "setpoint",
-                    stripped,
-                    bbox,
-                    {"setpoint_type": "SP", "value": m.group(2), "unit": m.group(3).strip()},
-                )
-            )
-            i += 1
-            continue
-
-        m = _SETPOINT_LIMIT_RE.match(stripped)
-        if m:
-            drafts.append(
-                ElementDraft(
-                    "setpoint", stripped, bbox, {"setpoint_type": m.group(1), "value": m.group(2)}
-                )
-            )
-            i += 1
-            continue
-
-        if _SIZE_TRANSITION_RE.match(stripped):
-            drafts.append(ElementDraft("dimension", stripped, bbox, {"kind": "size_transition"}))
+        single = _classify_single_token(stripped, bbox)
+        if single is not None:
+            drafts.append(single)
             i += 1
             continue
 
@@ -276,6 +366,8 @@ def classify_block_lines(lines: list[RawLine]) -> list[ElementDraft]:
         drafts.append(ElementDraft("text_block", stripped, bbox))
         i += 1
 
+    if ocr_tolerant:
+        _reclassify_ocr_tolerant(drafts)
     return drafts
 
 

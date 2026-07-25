@@ -22,6 +22,17 @@ Design notes (deliberate choices, see PROVENANCE/README):
   fallback is skipped and elements keep their low-confidence OCR text --
   ingest never hard-fails on a missing key. Original OCR text is preserved
   in attributes["ocr_text"] whenever the LLM replaces it.
+- classify_block_lines is called with ocr_tolerant=True here (never in the
+  native PDF or DWG adapters, where text extraction is exact): tesseract's
+  common single-character confusions (0/O, 1/I/l, 5/S, 8/B, 2/Z, 6/G) can
+  break classify_block_lines' exact-anchored patterns just often enough to
+  misclassify a real setpoint/line_number/valve/tag as a generic
+  text_block, which then blocks the delta engine's same-type matching gate
+  from rescuing it against its correctly-classified counterpart on the
+  other revision, even at near-zero bbox distance. ocr_tolerant retries a
+  confusion-normalized reading of the text to recover the *type* only --
+  the stored text is never rewritten. See PROVENANCE.md's "Real-world
+  hardening" section for the full mechanism and measured before/after.
 """
 
 import io
@@ -295,7 +306,7 @@ class PdfScannedAdapter(IngestAdapter):
                     if not raw_lines:
                         continue
                     block_lines = kept_lines
-                    drafts = classify_block_lines(raw_lines)
+                    drafts = classify_block_lines(raw_lines, ocr_tolerant=True)
                     for draft in drafts:
                         # Confidence: min over OCR lines overlapping the draft's
                         # bbox (a draft may merge several lines; the weakest
