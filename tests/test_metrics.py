@@ -137,6 +137,42 @@ class TestLLMTelemetry:
         snap = compute_metrics_snapshot(tmp_path)
         assert snap.llm.total_calls == 0  # no usage recorded -> not counted
 
+    def test_aggregates_by_purpose_tag(self, tmp_path):
+        write_trace(
+            tmp_path, "t1",
+            [
+                span(
+                    "llm.complete", 10.0, provider="openai_compatible", model="m",
+                    purpose="chat_answer", input_tokens=100, output_tokens=10, cost_usd=0.0,
+                ),
+                span(
+                    "llm.complete", 10.0, provider="openai_compatible", model="m",
+                    purpose="chat_answer", input_tokens=200, output_tokens=20, cost_usd=0.0,
+                ),
+                span(
+                    "llm.complete", 10.0, provider="openai_compatible", model="m",
+                    purpose="eval_judge", input_tokens=50, output_tokens=5, cost_usd=0.0,
+                ),
+            ],
+        )  # fmt: skip
+        snap = compute_metrics_snapshot(tmp_path)
+        assert snap.llm.by_purpose["chat_answer"].calls == 2
+        assert snap.llm.by_purpose["chat_answer"].input_tokens == 300
+        assert snap.llm.by_purpose["eval_judge"].calls == 1
+
+    def test_calls_without_purpose_tag_land_under_untagged(self, tmp_path):
+        write_trace(
+            tmp_path, "t1",
+            [
+                span(
+                    "llm.complete", 10.0, provider="anthropic", model="m",
+                    input_tokens=100, output_tokens=10, cost_usd=0.0,
+                ),
+            ],
+        )  # fmt: skip
+        snap = compute_metrics_snapshot(tmp_path)
+        assert snap.llm.by_purpose["untagged"].calls == 1
+
     def test_non_llm_spans_ignored(self, tmp_path):
         write_trace(tmp_path, "t1", [span("pdf_native.ingest", 5.0, elements_extracted=800)])
         snap = compute_metrics_snapshot(tmp_path)
@@ -191,8 +227,8 @@ class TestRetrievalMetrics:
         write_trace(
             tmp_path, "t1",
             [
-                span("chat.retrieve.hybrid", 10.0, recall_at_k=0.8, mrr=0.6),
-                span("chat.retrieve.hybrid", 10.0, recall_at_k=1.0, mrr=1.0),
+                span("eval.retrieval_query", 10.0, recall_at_k=0.8, mrr=0.6),
+                span("eval.retrieval_query", 10.0, recall_at_k=1.0, mrr=1.0),
             ],
         )  # fmt: skip
         snap = compute_metrics_snapshot(tmp_path)
@@ -200,6 +236,22 @@ class TestRetrievalMetrics:
         assert snap.retrieval.queries == 2
         assert snap.retrieval.recall_at_k == pytest.approx(0.9)
         assert snap.retrieval.mean_reciprocal_rank == pytest.approx(0.8)
+
+    def test_production_retrieve_spans_not_counted_as_eval_queries(self, tmp_path):
+        """chat.retrieve.hybrid/.exact/.vector (src/chat/index.py) are live
+        production telemetry with no ground truth -- they must never be
+        mistaken for scored eval queries (a hybrid call always nests one
+        exact + one vector sub-span, which would triple-count otherwise)."""
+        write_trace(
+            tmp_path, "t1",
+            [
+                span("chat.retrieve.exact", 1.0),
+                span("chat.retrieve.vector", 2.0),
+                span("chat.retrieve.hybrid", 3.0, exact_matched=1, vector_matched=5, merged=5),
+            ],
+        )  # fmt: skip
+        snap = compute_metrics_snapshot(tmp_path)
+        assert snap.retrieval is None
 
 
 class TestMalformedTraceFile:

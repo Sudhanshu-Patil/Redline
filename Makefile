@@ -7,7 +7,7 @@ lint:
 	uv run ruff check .
 
 typecheck:
-	uv run mypy src
+	uv run mypy src eval
 
 test:
 	uv run pytest
@@ -26,10 +26,10 @@ chat:
 	uv run python -m src.chat.answer $(MANIFEST)
 
 eval:
-	@echo "TODO: wire up in Phase 10 (make eval -> eval/scorecard.json)"
+	uv run python -m eval.run_eval --out eval/scorecard.json
 
 eval-diff:
-	@echo "TODO: wire up in Phase 10 (compare two scorecard.json runs)"
+	uv run python -m eval.eval_diff $(OLD) $(NEW)
 
 metrics:
 	uv run python -m src.observability.metrics_server

@@ -48,10 +48,10 @@ class FakeReranker:
 class FakeLLM:
     def __init__(self, reply: str):
         self._reply = reply
-        self.calls: list[tuple[str, str, int]] = []
+        self.calls: list[tuple[str, str, int, str]] = []
 
-    def complete(self, system: str, user: str, max_tokens: int = 1024) -> str:
-        self.calls.append((system, user, max_tokens))
+    def complete(self, system: str, user: str, max_tokens: int = 1024, purpose: str = "") -> str:
+        self.calls.append((system, user, max_tokens, purpose))
         return self._reply
 
 
@@ -59,7 +59,7 @@ class ExplodingLLM:
     """Proves the deterministic refusal path never reaches the LLM -- same
     intent as test_delta_engine.py::test_classifier_never_invokes_llm_client."""
 
-    def complete(self, system: str, user: str, max_tokens: int = 1024) -> str:
+    def complete(self, system: str, user: str, max_tokens: int = 1024, purpose: str = "") -> str:
         raise AssertionError("LLM must not be called when retrieval found nothing")
 
 
@@ -174,7 +174,7 @@ class TestAnswerQuestionGroundedAnswer:
         reranker = FakeReranker(order=["the relevant one", "irrelevant"])
         answer_question(index, "q", llm=llm, reranker=reranker)
         # only the reranked-and-kept passages reach the LLM's user prompt
-        _, user_prompt, _ = llm.calls[0]
+        _, user_prompt, _, _ = llm.calls[0]
         assert "the relevant one" in user_prompt
 
     def test_retrieval_uses_configured_top_k(self, monkeypatch):

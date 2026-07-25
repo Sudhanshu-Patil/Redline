@@ -19,8 +19,8 @@
       "gt_id": "GT3-MOVE",
       "change_type": "modified",
       "element_type": "geometry",
-      "old_text": "26BL9075",
-      "new_text": "26BL9075",
+      "old_text": "VALVE_GATE",
+      "new_text": "VALVE_GATE",
       "locator": {
         "page": 0,
         "bbox": [
@@ -29,9 +29,9 @@
           116.0,
           34.80695497953615
         ],
-        "near_text": "VALVE_GATE"
+        "near_text": "26BL9075"
       },
-      "rationale": "Moved block reference (same block, same layer): exercises the geometry-aware match rule (plan §4.2), which must pair the two INSERTs by layer+entity+block despite the offset. Label text moves with it."
+      "rationale": "Moved block reference (same block, same layer): exercises the geometry-aware match rule (plan §4.2), which must pair the two INSERTs by layer+entity+block despite the offset. The label text ('26BL9075') moves with it but keeps the same string, so it aligns as unchanged (correct: text-tier matching classifies same-text-different-position as unchanged, not modified) -- the reported delta is the geometry INSERT itself, whose canonical text is its block name. Corrected during Phase 10 eval: this entry originally listed the label text here, which the engine correctly never reports as a delta, producing a spurious false negative."
     },
     {
       "gt_id": "GT3-DIM",
@@ -49,7 +49,7 @@
     {
       "gt_id": "GT3-ADD-VALVE",
       "change_type": "added",
-      "element_type": "geometry",
+      "element_type": "valve",
       "old_text": null,
       "new_text": "43BL9020",
       "locator": {
@@ -57,7 +57,7 @@
         "bbox": null,
         "near_text": "VALVE_GATE"
       },
-      "rationale": "New valve insert + label + tie-in line (counted as the labelled valve; the tie-in LINE is a second added geometry)."
+      "rationale": "New valve insert + label + tie-in line (counted as the labelled valve, matching how the shared classifier tags '43BL9020' as element_type=valve via exact-key tier 1 -- not the geometry INSERT itself; the tie-in LINE is a second added geometry). Corrected during Phase 10 eval: this entry originally said element_type=geometry, which never matches the engine's actual (correct) classification."
     },
     {
       "gt_id": "GT3-DEL-DRAIN",

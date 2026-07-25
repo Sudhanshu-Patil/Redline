@@ -67,3 +67,54 @@ def load_manifest(path: Path) -> PairManifest:
 
 def load_ground_truth(path: Path) -> GroundTruth:
     return GroundTruth.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+class QAItem(BaseModel):
+    """One labeled chat question (plan §10): grounds both the retrieval-
+    quality eval (recall@k/MRR against `expected_citation_texts`) and the
+    chat groundedness/correctness judge eval. Citations are matched by
+    text, not element id, for the same reason GTLocator matches deltas by
+    text -- ids are adapter/ingestion-order-dependent, text is stable.
+    """
+
+    qa_id: str
+    pair_id: str
+    question: str
+    answerable: bool
+    # Texts of elements that would ground a correct answer -- empty for
+    # answerable=False (deliberately unanswerable) questions.
+    expected_citation_texts: list[str] = Field(default_factory=list)
+    expected_answer_summary: str
+    # Marks the small subset hand-scored by a human for judge validation
+    # (BRIEF's "validate the judge" bar) -- see eval/datasets/human_labels_*.json.
+    held_out: bool = False
+
+
+class QADataset(BaseModel):
+    pair_id: str
+    items: list[QAItem]
+
+
+def load_qa_dataset(path: Path) -> QADataset:
+    return QADataset.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+class HumanLabel(BaseModel):
+    """A hand-assigned score for one held-out QA item's actual chat output,
+    used only to validate the LLM judge against (never fed into scoring the
+    system itself) -- see eval/run_eval.py's judge/human agreement report.
+    """
+
+    qa_id: str
+    correctness: int = Field(ge=1, le=5)
+    groundedness: int = Field(ge=1, le=5)
+    notes: str = ""
+
+
+class HumanLabelSet(BaseModel):
+    pair_id: str
+    labels: list[HumanLabel]
+
+
+def load_human_labels(path: Path) -> HumanLabelSet:
+    return HumanLabelSet.model_validate_json(path.read_text(encoding="utf-8"))

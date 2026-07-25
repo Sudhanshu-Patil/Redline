@@ -141,3 +141,116 @@ unrelated (confirmed by pixel-sampling all four edges of the outline as uniform 
 A's and B's renderings, i.e. present unchanged on both sides, not a delta), but it's a
 coincidental clash worth knowing about before assuming every red line in a Pair 3 render is a
 flagged deletion.
+
+## Eval harness findings from real data (Phase 10)
+
+Running `eval/metrics.py`'s ground-truth matcher against all four labeled pairs (not just
+hand-built fixtures) surfaced two more real issues, both fixed here:
+
+1. **Two stale ground-truth entries in Pair 3.** `GT3-MOVE` listed the moved valve's *label*
+   text (`26BL9075`) as the changed element, but a position-only text move with unchanged
+   content correctly aligns as unchanged (by design, see §"Delta engine findings" above) — the
+   engine reports the *geometry INSERT itself* as modified (text = its block name,
+   `VALVE_GATE`), which is what the entry now says. `GT3-ADD-VALVE` listed `element_type:
+   geometry` for the new valve, but the engine correctly classifies the labelled valve as
+   `element_type: valve` via tier-1 exact-key matching (its own rationale text already said
+   "counted as the labelled valve" — the type field just hadn't been updated to match). Both
+   were authoring bugs from Phase 2/4, caught for the first time by an eval harness that
+   actually cross-checks ground truth text/type against real engine output field-by-field
+   instead of only checking element counts.
+
+2. **Pair 2's raw precision is very low (0.005) even after excluding the known single-character
+   noise category (§ above) — and this is a different, new kind of noise, not a bug.**
+   Investigated by sampling the actual false-positive text: of 861 raw false positives, 656 are
+   ≥2 characters (so the existing noise filter doesn't catch them), with a median length of 5
+   characters and real examples like `'ennnnNenAI OOS'`, `'aw,'`, `'Wn'`, `'RDS'` — tesseract
+   OCR misreads on a dense, small-font P&ID, not genuine content differences. This is
+   qualitatively different from Pair 1's single-character flag noise (a length-based
+   near-nothing signal) — OCR noise is *word-shaped garbage*, so a length threshold calibrated
+   for the native-PDF case doesn't and shouldn't catch it. No fix attempted: building a
+   garbage-text classifier (dictionary lookup, vowel-ratio heuristic, or similar) is a
+   meaningfully different feature than what `ALIGNMENT_MIN_EMBED_TEXT_LEN` was calibrated for,
+   and is exactly the kind of OCR-on-dense-content failure mode the plan's failure table is
+   meant to hold, not something to quietly engineer away under eval-phase time pressure.
+
+**Retrieval-quality note carried over from Phase 8, now measured, not just anecdotal:** the QA
+dataset (`eval/datasets/qa_pair1.json`) deliberately includes `QA-11` ("What is the HH trip
+limit for PIT-9062?"), the exact known-hard case documented in `src/chat/index.py`. The final
+live run measured `recall@k = 0.36`, `MRR = 0.36` over the 11 answerable questions, with
+`over_refusal_rate = 54.5%` (6 of 11 answerable questions incorrectly refused). Investigating
+individual cases (not just trusting the aggregate) surfaced two distinct, differently-actionable
+failure modes, both real:
+
+- **Most are genuine retrieval misses**: the expected answer text never reaches the reranked
+  top-k handed to the LLM. Same root cause as the documented `src/chat/index.py` limitation —
+  short, self-contained note/value text competing against more prominent nearby content in the
+  cross-encoder rerank. `QA-11` reproduces this every run (verified across all live runs).
+- **At least one is a pure generation failure despite correct retrieval**, confirmed by direct
+  inspection: for "What is note 22 about the design pressure?", the reranked context handed to
+  the LLM was verified (by calling `hybrid_search`/`rerank_chunks` directly and printing the
+  result) to contain `'22. DESIGN PRESSURE IN EXTERNAL SYSTEM DOWNSTREAM COMPRESSOR 257 BARG.'`
+  as the #1 and #2 ranked passages — yet in that run the model still replied `NOT_GROUNDED: There
+  is no note 22 in the provided context.` The correct answer was directly in front of it. Chat
+  completions aren't fully deterministic across runs (observed: which specific questions get
+  incorrectly refused varies run-to-run, e.g. this exact question answered correctly in a later
+  run), so this is reported as a confirmed *failure mode* — the model can decline even when
+  correctly-retrieved grounding is right there in context — rather than a claim that any one
+  specific question always fails this way. A free-tier-model instruction-following limitation,
+  not a retrieval or prompt-construction bug — no fix attempted (see below on scope).
+
+**A related false alarm, resolved by checking the actual cited element rather than trusting the
+recall@k number alone**: `QA-01`/`QA-02` (PSV-9066A/B set pressure) both scored `recall@k = 0.0`
+against the dataset's single expected citation text (`"SP = 260 bar (g)"`), yet the live chat
+answered both correctly and cited a *different*, equally valid source — note 37
+(`pair1_B:pdf_native:00824`, verified: `'37. PSV 9066A/B SET PRESSURE REVISED TO 260 BAR(G).'`).
+The retrieval eval is strictly correct by its own narrow definition (that specific text wasn't
+in the top-k), but the QA dataset's `expected_citation_texts` only anticipated one valid
+grounding source per question — a real limitation of the eval design, not the system under test.
+Left as-is rather than broadening the expected-citations list after seeing the result, which
+would be a step toward eval-gaming even with a legitimate justification; noted here instead so
+`recall@k = 0.36` is read with the right caveat: retrieval quality is somewhat understated,
+not overstated, by this number.
+
+**A genuine judge-miscalibration bug, caught by the "validate the judge" step, fixed, and
+re-validated.** The first live run scored `avg_correctness = 5.0` and `avg_groundedness = 5.0`
+across all 15 items — including all six false-refusal cases above. The judge/human agreement
+check (comparing against `eval/datasets/human_labels_pair1.json`'s hand-scored held-out subset)
+caught this immediately: 60% exact agreement, mean absolute difference 1.6 on correctness — the
+two held-out false-refusal items (QA-09, QA-11) were hand-scored `correctness=1` (zero
+information delivered) but judged `5`. Root cause: the original judge prompt's "if the reference
+summary says unanswerable and the assistant declined, score 5" rule was being over-applied by the
+judge model to *any* decline, not conditioned on whether the question was actually answerable.
+Fixed by rewriting `eval/judge.py`'s system prompt as an explicit four-branch decision procedure
+keyed off the `answerable` ground-truth field (passed to the judge as data, not left to its own
+inference) — branch 3 states plainly that declining an answerable question is CORRECTNESS=1
+regardless of how reasonable the refusal sounds. Re-run after the fix: `avg_correctness` dropped
+to `3.4` (now correctly penalizing the six false refusals) and `avg_groundedness` to `4.6`, and
+**judge/human agreement on the held-out set reached 100% exact agreement on both dimensions**
+(mean absolute difference `0.0`). This is exactly the scenario the brief's "validate the judge"
+requirement exists to catch: an unvalidated judge here would have shipped a scorecard claiming
+perfect groundedness while silently missing over half of answerable questions.
+
+**A second, independent bug found and fixed along the way: rate-limit wait parsing.** Re-running
+the full eval after the judge fix stalled for close to an hour on Pair 2's scanned-PDF ingest.
+Root cause, confirmed via `src/chat/llm.py`'s own trace logs: Groq's daily-quota 429 errors use
+a compound `"37m25.536s"` format (minutes *and* seconds), which the existing
+`parse_suggested_wait` regex silently failed to parse (`\b` never matches between the `m` unit
+and the immediately-following digit) — it fell back to a hardcoded 15s guess, which then retried
+~8 times and burned the *entire* configured wait budget (120s) before giving up, on every single
+vision-fallback region that needed it. Fixed in two parts: (1) the regex now parses the compound
+format directly, and (2) `_with_rate_limit_wait` fails immediately, without sleeping at all, when
+the provider's stated wait already exceeds the remaining budget — since no amount of waiting
+within budget can succeed, waiting anyway is pure cost with zero chance of success. Both fixes
+are covered by new unit tests (`tests/test_llm.py`) using the exact error strings observed live.
+This is unrelated to the take-home's own subject matter but a real, measured operational finding
+about running against a free-tier provider under sustained load — worth keeping for the
+interview-prep "what would you do differently at scale" discussion (§14).
+
+**Scope note:** the retrieval-side findings (short-fragment rerank loss; the generation-side
+false-refusal-despite-correct-retrieval case) are left undressed here, same reasoning as
+Phase 8 — real, measured, honestly reported, and exactly the kind of material the Phase 13
+failure table and interview prep are meant to hold, not something to patch under eval-phase time
+pressure. The judge-prompt and rate-limit fixes were different in kind: both corrected bugs in
+code this project owns (the validator's own logic; this project's own retry/backoff behavior),
+not a capability limit of the free-tier LLM being evaluated, so both were made directly rather
+than deferred.

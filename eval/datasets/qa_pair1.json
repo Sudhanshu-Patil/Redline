@@ -1,0 +1,148 @@
+{
+  "pair_id": "pair1",
+  "items": [
+    {
+      "qa_id": "QA-01",
+      "pair_id": "pair1",
+      "question": "What is the set pressure of PSV-9066A?",
+      "answerable": true,
+      "expected_citation_texts": ["SP = 260 bar (g)"],
+      "expected_answer_summary": "260 bar (g), per revision B (was 257 bar (g) in revision A).",
+      "held_out": true
+    },
+    {
+      "qa_id": "QA-02",
+      "pair_id": "pair1",
+      "question": "What is the set pressure of PSV-9066B?",
+      "answerable": true,
+      "expected_citation_texts": ["SP = 260 bar (g)"],
+      "expected_answer_summary": "260 bar (g), per revision B (was 257 bar (g) in revision A).",
+      "held_out": false
+    },
+    {
+      "qa_id": "QA-03",
+      "pair_id": "pair1",
+      "question": "What does note 37 say?",
+      "answerable": true,
+      "expected_citation_texts": ["37. PSV 9066A/B SET PRESSURE REVISED TO 260 BAR(G)."],
+      "expected_answer_summary": "It records that the PSV 9066A/B set pressure was revised to 260 bar(g).",
+      "held_out": false
+    },
+    {
+      "qa_id": "QA-04",
+      "pair_id": "pair1",
+      "question": "What does note 8 say about the flame arrester?",
+      "answerable": true,
+      "expected_citation_texts": ["8. FLAME ARRESTER INCLUDES FLAME FILTER AND LOCATED AT END OF PIPE."],
+      "expected_answer_summary": "The flame arrester includes a flame filter and is located at the end of the pipe.",
+      "held_out": true
+    },
+    {
+      "qa_id": "QA-05",
+      "pair_id": "pair1",
+      "question": "What is note 16 about?",
+      "answerable": true,
+      "expected_citation_texts": [
+        "16. PRIMARY SEAL GAS IS TAKEN DOWNSTREAM LAST COMPRESSING STAGE (8TH STAGE). SKID INTERNAL DESIGN."
+      ],
+      "expected_answer_summary": "Primary seal gas is taken downstream of the last (8th) compressing stage; this is skid-internal design.",
+      "held_out": false
+    },
+    {
+      "qa_id": "QA-06",
+      "pair_id": "pair1",
+      "question": "What is note 22 about the design pressure?",
+      "answerable": true,
+      "expected_citation_texts": [
+        "22. DESIGN PRESSURE IN EXTERNAL SYSTEM DOWNSTREAM COMPRESSOR 257 BARG."
+      ],
+      "expected_answer_summary": "The design pressure in the external system downstream of the compressor is 257 barg.",
+      "held_out": false
+    },
+    {
+      "qa_id": "QA-07",
+      "pair_id": "pair1",
+      "question": "What is note 33 about?",
+      "answerable": true,
+      "expected_citation_texts": ["33. CHEMICAL CLEANING (CIP); BLEED/DRAIN CONNECTION."],
+      "expected_answer_summary": "It's a chemical cleaning (CIP) / bleed-drain connection note.",
+      "held_out": false
+    },
+    {
+      "qa_id": "QA-08",
+      "pair_id": "pair1",
+      "question": "What alarm does note 19 describe for the suction strainer?",
+      "answerable": true,
+      "expected_citation_texts": [
+        "19. SUCTION STRAINER (COMMISSIONING PHASE ONLY) WITH STRAIGHT PIPE RUNS MIN. 5xD UPSTREAM AND 2xD DOWNSTREAM TO AVOID DAMAGE DUE TO TURBULENCE. HIGH ALARM AT 40 % OF DESIGN DP AND COMPRESSOR HIGH-HIGH TRIP AT 50 % OF DESIGN DP RECOMMENDED BY"
+      ],
+      "expected_answer_summary": "A high alarm at 40% of design differential pressure, with compressor high-high trip recommended at 50% of design DP.",
+      "held_out": false
+    },
+    {
+      "qa_id": "QA-09",
+      "pair_id": "pair1",
+      "question": "What does note 11 say about the VSD?",
+      "answerable": true,
+      "expected_citation_texts": [
+        "11. COMPRESSOR MOTOR EQUIPPED WITH VARIABLE SPEED DRIVE (VSD). FOR VSD MONITORING AND TRIP FUNCTION, REFER VENDOR DRAWING NO. (0D204-CIT-P-XB-ER252A-000001-002). VSD AND MCC NOT IN COMPRESSOR VENDOR SCOPE."
+      ],
+      "expected_answer_summary": "The compressor motor has a variable speed drive; VSD/MCC are outside the compressor vendor's scope, with monitoring/trip covered by a separate vendor drawing.",
+      "held_out": true
+    },
+    {
+      "qa_id": "QA-10",
+      "pair_id": "pair1",
+      "question": "Is there an instrument tagged PIT-9062 on this drawing?",
+      "answerable": true,
+      "expected_citation_texts": ["PIT-9062"],
+      "expected_answer_summary": "Yes, PIT-9062 is present (a pressure instrument/transmitter tag).",
+      "held_out": false
+    },
+    {
+      "qa_id": "QA-11",
+      "pair_id": "pair1",
+      "question": "What is the HH trip limit for PIT-9062?",
+      "answerable": true,
+      "expected_citation_texts": ["HH: 250"],
+      "expected_answer_summary": "HH: 250, per revision B (was HH: 245 in revision A). Known hard case: this value has no textual link to the PIT-9062 tag in the extracted text (see src/chat/index.py module docstring) -- retrieval may miss it and refuse instead.",
+      "held_out": true
+    },
+    {
+      "qa_id": "QA-12",
+      "pair_id": "pair1",
+      "question": "What is the ambient design temperature range for this compressor station?",
+      "answerable": false,
+      "expected_citation_texts": [],
+      "expected_answer_summary": "Not present in the document -- should be refused, not guessed.",
+      "held_out": true
+    },
+    {
+      "qa_id": "QA-13",
+      "pair_id": "pair1",
+      "question": "What is the warranty period for the PSV valves?",
+      "answerable": false,
+      "expected_citation_texts": [],
+      "expected_answer_summary": "Not present in the document -- should be refused, not guessed.",
+      "held_out": false
+    },
+    {
+      "qa_id": "QA-14",
+      "pair_id": "pair1",
+      "question": "What color is the process piping painted?",
+      "answerable": false,
+      "expected_citation_texts": [],
+      "expected_answer_summary": "Not present in the document -- should be refused, not guessed.",
+      "held_out": false
+    },
+    {
+      "qa_id": "QA-15",
+      "pair_id": "pair1",
+      "question": "Who is the vendor's project manager for this package?",
+      "answerable": false,
+      "expected_citation_texts": [],
+      "expected_answer_summary": "Not present in the document -- should be refused, not guessed.",
+      "held_out": false
+    }
+  ]
+}

@@ -9,14 +9,23 @@ import statistics
 from datetime import UTC, datetime
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.config import settings
 
 # Span names whose attributes carry LLM token/cost telemetry (src/chat/llm.py).
 _LLM_SPAN_NAMES = {"llm.complete", "llm.read_image_text"}
 _DELTA_COMPUTE_SPAN = "delta.compute"
-_RETRIEVAL_SPAN_PREFIX = "chat.retrieve"  # Phase 8; not emitted yet
+# Retrieval QUALITY (recall@k, MRR) needs ground truth no live query has, so
+# it's only ever known offline -- eval/retrieval_eval.py emits a span under
+# this distinct name, separate from chat.retrieve.hybrid/.exact/.vector
+# (src/chat/index.py), which carry production latency/candidate-count
+# telemetry on every real call and have no ground truth to score against.
+# An earlier version of this filter matched any "chat.retrieve*" span,
+# which triple-counted "queries" (one hybrid call always nests one exact +
+# one vector sub-span) -- caught while wiring up eval/retrieval_eval.py
+# (Phase 10), the first real code that could ever populate recall_at_k/mrr.
+_RETRIEVAL_EVAL_SPAN_NAME = "eval.retrieval_query"
 
 
 class LatencyStats(BaseModel):
@@ -41,6 +50,13 @@ class LLMTelemetry(BaseModel):
     total_output_tokens: int
     total_cost_usd: float
     by_model: dict[str, LLMModelTelemetry]
+    # Every LLMClient.complete() caller shares the "llm.complete" span name
+    # (chat answers, eval judge scoring, ...) -- purpose is an explicit tag
+    # (src/chat/llm.py) so cost_latency_report.py can report "cost per chat
+    # turn" without it being silently blended with judge-eval spend. Calls
+    # from before this tag existed, or read_image_text (OCR vision fallback,
+    # already unambiguous by span name), land under "untagged".
+    by_purpose: dict[str, LLMModelTelemetry] = Field(default_factory=dict)
 
 
 class DeltaTotals(BaseModel):
@@ -114,8 +130,21 @@ def _latency_by_stage(spans: list[dict]) -> dict[str, LatencyStats]:
     return result
 
 
+def _accumulate(
+    bucket: dict[str, LLMModelTelemetry], key: str, in_tok: int, out_tok: int, cost: float
+) -> None:
+    entry = bucket.setdefault(
+        key, LLMModelTelemetry(calls=0, input_tokens=0, output_tokens=0, cost_usd=0.0)
+    )
+    entry.calls += 1
+    entry.input_tokens += in_tok
+    entry.output_tokens += out_tok
+    entry.cost_usd = round(entry.cost_usd + cost, 6)
+
+
 def _llm_telemetry(spans: list[dict]) -> LLMTelemetry:
     by_model: dict[str, LLMModelTelemetry] = {}
+    by_purpose: dict[str, LLMModelTelemetry] = {}
     total_calls = total_in = total_out = 0
     total_cost = 0.0
     for s in spans:
@@ -125,17 +154,13 @@ def _llm_telemetry(spans: list[dict]) -> LLMTelemetry:
         if "input_tokens" not in attrs:
             continue  # e.g. a call that errored before usage was recorded
         model = attrs.get("model", "unknown")
+        purpose = attrs.get("purpose") or "untagged"
         in_tok = int(attrs.get("input_tokens", 0))
         out_tok = int(attrs.get("output_tokens", 0))
         cost = float(attrs.get("cost_usd", 0.0))
 
-        entry = by_model.setdefault(
-            model, LLMModelTelemetry(calls=0, input_tokens=0, output_tokens=0, cost_usd=0.0)
-        )
-        entry.calls += 1
-        entry.input_tokens += in_tok
-        entry.output_tokens += out_tok
-        entry.cost_usd = round(entry.cost_usd + cost, 6)
+        _accumulate(by_model, model, in_tok, out_tok, cost)
+        _accumulate(by_purpose, purpose, in_tok, out_tok, cost)
 
         total_calls += 1
         total_in += in_tok
@@ -148,6 +173,7 @@ def _llm_telemetry(spans: list[dict]) -> LLMTelemetry:
         total_output_tokens=total_out,
         total_cost_usd=round(total_cost, 6),
         by_model=by_model,
+        by_purpose=by_purpose,
     )
 
 
@@ -181,11 +207,11 @@ def _delta_totals(spans: list[dict]) -> DeltaTotals:
 
 
 def _retrieval_metrics(spans: list[dict]) -> RetrievalMetrics | None:
-    """Phase 8 (grounded chat) hasn't landed yet, so no retrieval spans
-    exist -- report None rather than fabricate a zero/empty result that
-    would look like a real (if trivial) measurement.
+    """Retrieval quality is only known once eval/retrieval_eval.py has run
+    at least once against labeled data -- report None rather than fabricate
+    a zero/empty result that would look like a real (if trivial) measurement.
     """
-    retrieval_spans = [s for s in spans if s["name"].startswith(_RETRIEVAL_SPAN_PREFIX)]
+    retrieval_spans = [s for s in spans if s["name"] == _RETRIEVAL_EVAL_SPAN_NAME]
     if not retrieval_spans:
         return None
     recalls = [

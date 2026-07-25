@@ -1,0 +1,35 @@
+{
+  "pair_id": "pair1",
+  "labels": [
+    {
+      "qa_id": "QA-01",
+      "correctness": 5,
+      "groundedness": 5,
+      "notes": "Actual answer: 'The set pressure of PSV-9066A is 260 bar (g) [pair1_B:pdf_native:00824].' Correct value, single valid citation, matches reference exactly."
+    },
+    {
+      "qa_id": "QA-04",
+      "correctness": 5,
+      "groundedness": 5,
+      "notes": "Actual answer quotes note 8 verbatim with a valid citation to pair1_A:pdf_native:00007. Matches reference exactly."
+    },
+    {
+      "qa_id": "QA-09",
+      "correctness": 1,
+      "groundedness": 4,
+      "notes": "Actual answer: 'NOT_GROUNDED: The content of note 11 is not provided in the given context.' This is a FALSE REFUSAL -- note 11 is genuinely present in the document (verified: pdf_native adapter extracts '11. COMPRESSOR MOTOR EQUIPPED WITH VARIABLE SPEED DRIVE (VSD)...' as its own element), so correctness is low: it provided zero of the expected information. Groundedness is scored higher than correctness (not 1) because the model did not fabricate or guess -- it declined rather than hallucinate, which is the right failure mode even though the refusal itself was wrong. Root cause is a retrieval miss (the note apparently didn't survive into the reranked top-k for this phrasing), not a generation-side hallucination."
+    },
+    {
+      "qa_id": "QA-11",
+      "correctness": 1,
+      "groundedness": 4,
+      "notes": "Actual answer: 'NOT_GROUNDED: No information is provided about the HH trip limit for PIT-9062.' This is the documented known-hard case (src/chat/index.py module docstring, found during Phase 8): 'HH: 250' has no textual link to the 'PIT-9062' tag in the extracted text, so retrieval/rerank can miss it even though the tag itself IS retrieved. Same reasoning as QA-09: correctness low (no information delivered), groundedness scored higher than 1 since the model declined honestly instead of guessing a number."
+    },
+    {
+      "qa_id": "QA-12",
+      "correctness": 5,
+      "groundedness": 5,
+      "notes": "Actual answer: 'NOT_GROUNDED: There is no information provided about the ambient design temperature range.' Correct refusal of a genuinely unanswerable question -- exactly the desired behavior."
+    }
+  ]
+}

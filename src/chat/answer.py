@@ -45,7 +45,9 @@ _CITATION_RE = re.compile(r"\[([^\[\]]+)\]")
 
 
 class LLM(Protocol):
-    def complete(self, system: str, user: str, max_tokens: int = 1024) -> str: ...
+    def complete(
+        self, system: str, user: str, max_tokens: int = 1024, purpose: str = ""
+    ) -> str: ...
 
 
 class Citation(BaseModel):
@@ -128,7 +130,10 @@ def answer_question(
         context = _build_context(reranked)
         client = llm or LLMClient()
         raw = client.complete(
-            system=_SYSTEM_PROMPT, user=f"{context}\n\nQuestion: {query}", max_tokens=512
+            system=_SYSTEM_PROMPT,
+            user=f"{context}\n\nQuestion: {query}",
+            max_tokens=512,
+            purpose="chat_answer",
         ).strip()
 
         if raw.startswith(_NOT_GROUNDED_PREFIX):

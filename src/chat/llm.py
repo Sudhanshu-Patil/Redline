@@ -52,6 +52,16 @@ def normalize_empty_reply(text: str) -> str:
     return "" if _EMPTY_REPLY_RE.match(text) else text
 
 
+# Daily-quota 429s use a compound "37m25.536s" format (minutes AND seconds,
+# not one or the other) -- tried first since the single-unit pattern below
+# silently fails to parse it: `[\d.]+` greedily consumes "37", then `\b`
+# right after the "m" unit never matches because the following digit ("2")
+# is a word character too, so there's no word-boundary transition. That
+# silent failure previously fell back to a hardcoded 15s guess, which then
+# retried ~8 times and burned the entire wait budget anyway before giving
+# up -- on a real quota-exhausted run with many fallback calls, this alone
+# turned into the better part of an hour of guaranteed-futile waiting.
+_RETRY_AFTER_COMPOUND_RE = re.compile(r"try again in (\d+)m([\d.]+)s\b", re.IGNORECASE)
 _RETRY_AFTER_RE = re.compile(r"try again in ([\d.]+)\s*(ms|s|m)\b", re.IGNORECASE)
 
 T = TypeVar("T")
@@ -59,7 +69,12 @@ T = TypeVar("T")
 
 def parse_suggested_wait(message: str) -> float | None:
     """Extract the provider's suggested wait from a 429 body, in seconds.
-    Groq phrases it as 'Please try again in 7.66s' (also ms/m variants)."""
+    Groq phrases it as 'Please try again in 7.66s' (also ms/m variants), or
+    'Please try again in 37m25.536s' for daily-quota errors."""
+    compound = _RETRY_AFTER_COMPOUND_RE.search(message)
+    if compound:
+        minutes, seconds = float(compound.group(1)), float(compound.group(2))
+        return minutes * 60 + seconds
     m = _RETRY_AFTER_RE.search(message)
     if not m:
         return None
@@ -71,14 +86,36 @@ def parse_suggested_wait(message: str) -> float | None:
 def _with_rate_limit_wait(call: Callable[[], T]) -> T:
     """Run `call`; on 429, honor the provider's stated wait (within budget)
     and retry until the budget is exhausted. Free tiers burst-limit far
-    beyond what the SDK's built-in backoff tolerates."""
+    beyond what the SDK's built-in backoff tolerates.
+
+    A daily-quota 429 states a wait far longer than any reasonable budget
+    (observed: "try again in 37m" against a 120s budget). Waiting out the
+    full budget anyway and still failing is pure waste -- and it repeats on
+    every subsequent call in the same run, since the quota doesn't reset
+    between them (measured: this alone stalled a scanned-PDF ingest with
+    many vision-fallback regions for the better part of an hour). If the
+    provider's stated wait alone already exceeds the remaining budget,
+    there's no amount of waiting within budget that succeeds, so fail
+    immediately instead.
+    """
     budget = settings.llm_rate_limit_max_wait_seconds
     while True:
         try:
             return call()
         except openai.RateLimitError as exc:
-            wait = parse_suggested_wait(str(exc)) or 15.0
-            wait = min(wait + 1.0, budget)  # +1s margin over the stated window
+            suggested = parse_suggested_wait(str(exc))
+            if suggested is not None and suggested > budget:
+                log.warning(
+                    "rate limited; provider wait exceeds budget, failing fast",
+                    extra={
+                        "extra_fields": {
+                            "suggested_wait_seconds": round(suggested, 1),
+                            "budget_seconds": budget,
+                        }
+                    },
+                )
+                raise
+            wait = min((suggested or 15.0) + 1.0, budget)  # +1s margin over the stated window
             if budget <= 0 or wait <= 0:
                 raise
             log.warning(
@@ -133,10 +170,10 @@ class LLMClient:
             )
         return self._client
 
-    def _anthropic_complete(self, system: str, user: str, max_tokens: int) -> str:
+    def _anthropic_complete(self, system: str, user: str, max_tokens: int, purpose: str) -> str:
         client = self._get_client()
         with tracing.span(
-            "llm.complete", provider="anthropic", model=settings.anthropic_model
+            "llm.complete", provider="anthropic", model=settings.anthropic_model, purpose=purpose
         ) as sp:
             response = client.messages.create(
                 model=settings.anthropic_model,
@@ -210,10 +247,10 @@ class LLMClient:
             )
         return self._oai_client
 
-    def _oai_complete(self, system: str, user: str, max_tokens: int) -> str:
+    def _oai_complete(self, system: str, user: str, max_tokens: int, purpose: str) -> str:
         client = self._get_oai_client()
         with tracing.span(
-            "llm.complete", provider="openai_compatible", model=settings.llm_model
+            "llm.complete", provider="openai_compatible", model=settings.llm_model, purpose=purpose
         ) as sp:
             response = _with_rate_limit_wait(
                 lambda: client.chat.completions.create(
@@ -276,11 +313,19 @@ class LLMClient:
 
     # --- public interface ---
 
-    def complete(self, system: str, user: str, max_tokens: int = 1024) -> str:
-        """Plain text completion (used by chat/report phases)."""
+    def complete(self, system: str, user: str, max_tokens: int = 1024, purpose: str = "") -> str:
+        """Plain text completion (used by chat/eval-judge).
+
+        `purpose` (e.g. "chat_answer", "eval_judge") is recorded as a span
+        attribute only -- it's telemetry for cost_latency_report.py to break
+        spend down by caller, never used to change behavior. Every caller
+        shares the "llm.complete" span name, so without this tag a chat
+        turn's cost and a judge eval's cost would be indistinguishable in
+        the traces (see src/observability/metrics.py's LLMTelemetry.by_purpose).
+        """
         if settings.llm_provider == "anthropic":
-            return self._anthropic_complete(system, user, max_tokens)
-        return self._oai_complete(system, user, max_tokens)
+            return self._anthropic_complete(system, user, max_tokens, purpose)
+        return self._oai_complete(system, user, max_tokens, purpose)
 
     def read_image_text(self, png_bytes: bytes, context_hint: str = "") -> str:
         """Vision re-read of a small image crop; returns the verbatim text seen.

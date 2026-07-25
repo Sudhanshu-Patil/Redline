@@ -250,13 +250,22 @@ class TestRateLimitWait:
             ("Rate limit reached ... Please try again in 7.66s. ...", 7.66),
             ("Please try again in 250ms.", 0.25),
             ("Please try again in 2m.", 120.0),
+            # Real Groq daily-quota format: compound minutes+seconds, not
+            # one or the other -- the exact string observed in a live run.
+            ("... Please try again in 37m25.536s", 37 * 60 + 25.536),
+            ("... Please try again in 31m21.792s", 31 * 60 + 21.792),
+            ("Please try again in 0m5s", 5.0),
             ("no wait hint here", None),
         ],
     )
     def test_parse_suggested_wait(self, message, expected):
         from src.chat.llm import parse_suggested_wait
 
-        assert parse_suggested_wait(message) == expected
+        result = parse_suggested_wait(message)
+        if expected is None:
+            assert result is None
+        else:
+            assert result == pytest.approx(expected)
 
     def test_retries_after_stated_wait_then_succeeds(self, monkeypatch):
         import openai as openai_mod
@@ -314,6 +323,54 @@ class TestRateLimitWait:
         with pytest.raises(openai_mod.RateLimitError):
             llm_mod._with_rate_limit_wait(limited)
         assert called["sleep"] is False
+
+    def test_daily_quota_wait_beyond_budget_fails_fast_without_sleeping(self, monkeypatch):
+        """A 'try again in 37m' daily-quota error against a 120s budget must
+        never wait -- no amount of waiting within budget can succeed, and
+        every subsequent call in the same run would repeat the same
+        guaranteed-futile wait if it did."""
+        import openai as openai_mod
+
+        from src.chat import llm as llm_mod
+
+        called = {"sleep": False}
+        monkeypatch.setattr(llm_mod.time, "sleep", lambda s: called.update(sleep=True))
+        monkeypatch.setattr(settings, "llm_rate_limit_max_wait_seconds", 120.0)
+
+        def quota_exhausted():
+            raise openai_mod.RateLimitError(
+                "Rate limit reached. Please try again in 37m25.536s.",
+                response=_fake_httpx_response(),
+                body=None,
+            )
+
+        with pytest.raises(openai_mod.RateLimitError):
+            llm_mod._with_rate_limit_wait(quota_exhausted)
+        assert called["sleep"] is False
+
+    def test_wait_exactly_at_budget_still_waits(self, monkeypatch):
+        """Boundary check: a suggested wait that fits (not exceeds) the
+        budget must still take the normal wait-and-retry path."""
+        import openai as openai_mod
+
+        from src.chat import llm as llm_mod
+
+        sleeps: list[float] = []
+        monkeypatch.setattr(llm_mod.time, "sleep", lambda s: sleeps.append(s))
+        monkeypatch.setattr(settings, "llm_rate_limit_max_wait_seconds", 20.0)
+
+        attempts = {"n": 0}
+
+        def flaky():
+            attempts["n"] += 1
+            if attempts["n"] < 2:
+                raise openai_mod.RateLimitError(
+                    "Please try again in 19s.", response=_fake_httpx_response(), body=None
+                )
+            return "done"
+
+        assert llm_mod._with_rate_limit_wait(flaky) == "done"
+        assert sleeps == [20.0]  # 19s + 1s margin, clamped to the 20s budget
 
 
 def _fake_httpx_response():
