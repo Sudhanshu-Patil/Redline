@@ -53,45 +53,8 @@ scanned-PDF vision fallback and for grounded chat.
 
 ## Architecture
 
-```
-                    ┌─────────────┐
-  PDF (native) ────▶│             │
-  PDF (scanned)────▶│   ingest    │──▶ CanonicalDocument (pydantic v2, one schema for all 3 formats)
-  DWG / DXF ───────▶│             │         │
-                    └─────────────┘         │
-                                             ▼
-                              ┌───────────────────────────┐
-                              │   delta/align.py          │  tier 1: exact key
-                              │   (deterministic,         │  tier 2: DWG geometry
-                              │    no LLM)                │  tier 3: embedding + bbox proximity
-                              └───────────────────────────┘
-                                             │
-                          ┌──────────────────┼──────────────────┐
-                          ▼                  ▼                  ▼
-                   delta/report.py    markup/overlay.py   eval/metrics.py
-                   JSON/MD/HTML       colored bbox         P/R/F1 vs.
-                   + charts           overlay export       ground truth
-                                             
-                              ┌───────────────────────────┐
-  question ───────────────────▶   chat/index.py            │
-                              │   exact lookup + vector    │
-                              │   search (chromadb)        │
-                              └──────────────┬─────────────┘
-                                             ▼
-                              chat/rerank.py (cross-encoder)
-                                             ▼
-                              chat/answer.py (LLM: cite-or-refuse)
-                                             ▼
-                                     cited answer or refusal
+<img width="3520" height="2122" alt="architecture-diagram" src="https://github.com/user-attachments/assets/09c3a069-1022-457f-93d3-457f62f97f74" />
 
-  Every stage above ──▶ observability/tracing.py + logging.py ──▶ traces/{trace_id}.jsonl
-                                                                          │
-                                                                          ▼
-                                                        observability/metrics.py (live aggregation)
-                                                                          │
-                                                                          ▼
-                                                                    served at /metrics
-```
 
 `src/dashboard/app.py` is a thin FastAPI layer over all of the above — no new logic, just
 routing and session bookkeeping (plain HTML forms, no client-side JS framework).
