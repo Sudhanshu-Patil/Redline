@@ -4,6 +4,8 @@ Takes two revisions of an engineering drawing (native PDF, scanned PDF, or DWG/D
 you, deterministically, what actually changed — then lets you ask questions about either
 revision and get cited answers instead of guesses.
 
+Demo link: https://drive.google.com/file/d/1PZXix5YPPk2Vv7bS1BxfMjkkR7xWPG0K/view?usp=drive_link
+
 Built for an Applied AI Engineer take-home. Full design rationale in
 [`IMPLEMENTATION_PLAN.md`](IMPLEMENTATION_PLAN.md), the execution contract in
 [`BRIEF.md`](BRIEF.md), a live-verified demo script in [`DEMO.md`](DEMO.md), the candid failure
